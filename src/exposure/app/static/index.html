@@ -239,35 +239,52 @@ async function ensureSubject() {
 
 // Provider errors are machine codes; the user needs an action, not a code.
 const PROVIDER_ERRORS = {
+  no_search_provider_configured:
+    'no search provider configured — enable SearXNG (no key needed) or add a Brave key under Settings',
   brave_api_key_missing: 'no Brave API key — add one under Settings → brave, or use manual URLs',
   brave_unauthorized:    'Brave rejected the API key — check it under Settings → brave',
   brave_rate_limited:    'Brave rate-limited this scan — wait and retry, or use manual URLs',
   brave_bad_json:        'Brave returned an unreadable response — retry later',
+  searxng_url_missing:   'SearXNG is enabled but has no instance URL — set one under Settings → searxng',
+  searxng_url_bad_scheme: 'SearXNG instance URL must start with http:// or https://',
+  searxng_json_api_blocked:
+    'that SearXNG instance blocked the request (rate limit, or JSON API disabled) — try your own instance',
+  searxng_json_api_disabled:
+    'that SearXNG instance has the JSON API disabled — most public ones do; self-host to use search',
 };
 function explainProviderError(code) {
   if (PROVIDER_ERRORS[code]) return PROVIDER_ERRORS[code];
   if (code.startsWith('brave_http_')) return `Brave returned HTTP ${code.slice(11)}`;
   if (code.startsWith('brave_request_failed')) return 'could not reach Brave — check your connection';
+  if (code.startsWith('searxng_http_')) return `SearXNG returned HTTP ${code.slice(13)}`;
+  if (code.startsWith('searxng_request_failed')) return 'could not reach that SearXNG instance — check the URL';
   return code;
 }
 
-async function braveKeyPresent() {
+// Which search provider, if any, is actually usable right now.
+async function activeSearchProvider() {
   const provs = await api('GET', '/api/v1/settings/providers');
+  const sx = provs.find(p => p.id === 'searxng');
+  if (sx && sx.enabled && sx.config && sx.config.base_url) return 'searxng';
   const brave = provs.find(p => p.id === 'brave');
-  return !!(brave && brave.has_key);
+  if (brave && brave.has_key) return 'brave';
+  return null;
 }
 
 // Tell the user up front whether the search box will actually work.
 async function refreshBraveHint() {
   const hint = el('braveHint');
-  if (await braveKeyPresent()) {
-    hint.textContent = 'API key set — search is available.';
-    return;
+  const provider = await activeSearchProvider();
+  if (provider === 'searxng') {
+    hint.textContent = 'Using your SearXNG instance — no API key involved.';
+  } else if (provider === 'brave') {
+    hint.textContent = 'Using Brave (API key set).';
+  } else {
+    hint.innerHTML =
+      'No search provider yet. Easiest keyless option: enable <strong>SearXNG</strong> ' +
+      'under Settings and point it at your own instance. Otherwise leave this ' +
+      'unticked and use manual URLs below — that works fully and sends nothing.';
   }
-  hint.innerHTML =
-    'No Brave API key yet. Add one under <strong>Settings → brave</strong>, or ' +
-    'leave this unticked and use manual URLs. Keys come from ' +
-    '<code>brave.com/search/api</code> (paid, with a small monthly credit).';
 }
 
 el('btn-scan').onclick = guard(async () => {
@@ -280,18 +297,19 @@ el('btn-scan').onclick = guard(async () => {
     el('scanStatus').textContent = 'not started — no search provider and no manual URLs';
     return;
   }
-  // Pre-flight: a missing key would otherwise surface as a bare error code
-  // after the scan had already run.
-  if (body.use_search && !await braveKeyPresent()) {
+  // Pre-flight: an unconfigured provider would otherwise surface as a bare
+  // error code after the scan had already run.
+  if (body.use_search && !await activeSearchProvider()) {
     if (body.manual_urls.length === 0) {
       el('scanStatus').textContent =
-        'not started — search is ticked but no Brave API key is set. ' +
-        'Add a key under Settings → brave, or untick search and use manual URLs.';
-      toast('No Brave API key — see Settings, or use manual URLs');
+        'not started — search is ticked but no provider is configured. ' +
+        'Enable SearXNG (no key needed) or add a Brave key under Settings, ' +
+        'or untick search and use manual URLs.';
+      toast('No search provider — see Settings, or use manual URLs');
       await refreshBraveHint();
       return;
     }
-    toast('No Brave API key — scanning your manual URLs only');
+    toast('No search provider — scanning your manual URLs only');
     body.use_search = false;
   }
   el('scanStatus').textContent = 'starting…';
@@ -405,23 +423,46 @@ window.verifyCase = async (id) => { toast('Verifying…');
   catch(e){ toast('Error: '+e.message); } };
 
 // -- settings
+const PROVIDER_BLURB = {
+  searxng: 'Metasearch. <strong>No API key needed.</strong> Point it at your own ' +
+    'self-hosted SearXNG (e.g. <code>http://127.0.0.1:8888</code>) so your queries ' +
+    'never reach a third party. A public instance also works, but then that ' +
+    "instance's operator sees your queries — and many disable the JSON API.",
+  brave: 'Commercial search API. Paid, with a small monthly credit. Key from ' +
+    '<code>brave.com/search/api</code>.',
+  ai: 'Optional. Exposure is fully functional with AI off, and off is the default.',
+};
+
 async function loadProviders() {
   const provs = await api('GET','/api/v1/settings/providers');
-  document.getElementById('providersBox').innerHTML = provs.map(p=>`
+  el('providersBox').innerHTML = provs.map(p=>`
     <div class="card" style="margin:.5rem 0">
       <strong>${esc(p.id)}</strong> <span class="muted">(${esc(p.kind)})</span>
-      ${p.has_key?'<span class="pill">key set</span>':'<span class="pill">no key</span>'}
-      <label>API key (stored in your OS keyring / encrypted vault — never in the database)</label>
-      <input type="password" id="key-${p.id}" placeholder="paste key to update">
+      ${p.needs_key
+        ? (p.has_key?'<span class="pill">key set</span>':'<span class="pill">no key</span>')
+        : '<span class="pill">no key required</span>'}
+      <div class="muted" style="margin:.3rem 0">${PROVIDER_BLURB[p.id]||''}</div>
+      ${p.id==='searxng'
+        ? `<label>Instance URL</label>
+           <input id="url-${p.id}" placeholder="http://127.0.0.1:8888"
+                  value="${esc((p.config&&p.config.base_url)||'')}">`
+        : `<label>API key (stored in your OS keyring / encrypted vault — never in the database)</label>
+           <input type="password" id="key-${p.id}" placeholder="paste key to update">`}
       <label class="row"><input type="checkbox" id="en-${p.id}" ${p.enabled?'checked':''} style="width:auto"> &nbsp;enabled</label>
       <button class="ghost" onclick="saveProvider('${p.id}')">Save ${esc(p.id)}</button>
     </div>`).join('');
 }
-window.saveProvider = async (id) => {
-  const body = { enabled: document.getElementById('en-'+id).checked };
-  const k = document.getElementById('key-'+id).value.trim(); if (k) body.api_key = k;
-  await api('PUT', `/api/v1/settings/providers/${id}`, body); toast('Saved'); loadProviders();
-};
+window.saveProvider = guard(async (id) => {
+  const body = { enabled: el('en-'+id).checked, config: {} };
+  const keyEl = document.getElementById('key-'+id);
+  if (keyEl && keyEl.value.trim()) body.api_key = keyEl.value.trim();
+  const urlEl = document.getElementById('url-'+id);
+  if (urlEl) body.config.base_url = urlEl.value.trim();
+  await api('PUT', `/api/v1/settings/providers/${id}`, body);
+  toast('Saved');
+  await loadProviders();
+  await refreshBraveHint();
+});
 el('btn-export').onclick = guard(async () => {
   if (!activeSubject) { toast('Select a subject'); return; }
   const r = await api('POST', `/api/v1/exports?subject_id=${activeSubject}`);

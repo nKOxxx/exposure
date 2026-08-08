@@ -440,14 +440,23 @@ class Service:
     def list_providers(self) -> list[dict[str, Any]]:
         known = {p["id"]: p for p in self.db.list_providers()}
         out = []
-        for pid, kind in (("brave", "search"), ("ai", "ai")):
+        for pid, kind in (("searxng", "search"), ("brave", "search"), ("ai", "ai")):
             row = known.get(pid, {"id": pid, "kind": kind, "enabled": False, "config": {}})
             row["has_key"] = self.db.secrets.get_api_key(pid) is not None
+            row["needs_key"] = pid != "searxng"
             out.append(row)
         return out
 
     def set_provider(self, provider_id: str, payload: ProviderUpdate) -> dict[str, Any]:
-        kind = "search" if provider_id == "brave" else "ai"
+        kind = "search" if provider_id in ("brave", "searxng") else "ai"
+        if provider_id == "searxng" and payload.enabled:
+            from exposure.discovery.providers.searxng import validate_instance_url
+
+            base_url = str(payload.config.get("base_url", ""))
+            try:
+                payload.config["base_url"] = validate_instance_url(base_url)
+            except Exception as exc:
+                raise ServiceError(f"invalid SearXNG URL: {exc}", 400) from exc
         # The API key goes to the secret vault, never the database.
         if payload.api_key:
             self.db.secrets.set_api_key(provider_id, payload.api_key)

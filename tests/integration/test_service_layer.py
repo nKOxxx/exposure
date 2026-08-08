@@ -123,10 +123,10 @@ def test_background_scan_completes(svc: Service) -> None:
 
 
 def test_scan_without_key_reports_provider_error(svc: Service) -> None:
-    """Search enabled with no API key must surface an error, not zero findings."""
+    """Search enabled with no provider must surface an error, not zero findings."""
     subject = svc.create_subject(SubjectCreate(name="Jane Example"))
     scan_id, stats = svc.start_scan(subject.id, ScanCreate(use_search=True))
-    assert "brave_api_key_missing" in stats.provider_errors
+    assert "no_search_provider_configured" in stats.provider_errors
     assert svc.get_scan(scan_id)["status"] == "INCOMPLETE"
 
 

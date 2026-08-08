@@ -21,8 +21,17 @@ from exposure.assessment import (
     summarize,
 )
 from exposure.config import Settings
-from exposure.discovery import ProviderError, SearchCandidate, plan_queries
-from exposure.discovery.providers import BraveSearchProvider, ManualURLProvider
+from exposure.discovery import (
+    DiscoveryProvider,
+    ProviderError,
+    SearchCandidate,
+    plan_queries,
+)
+from exposure.discovery.providers import (
+    BraveSearchProvider,
+    ManualURLProvider,
+    SearXNGProvider,
+)
 from exposure.domain.enums import MatchState, SignalKind, SourceStatus
 from exposure.domain.models import Finding, Observation, Source, Subject, new_id, utcnow
 from exposure.extraction import extract_document
@@ -108,6 +117,27 @@ class Scanner:
         scan_id = self.begin(subject)
         return scan_id, self.run_existing(scan_id, subject, options)
 
+    def _select_provider(self) -> DiscoveryProvider:
+        """Pick the configured search provider.
+
+        SearXNG is preferred when configured because it needs no API key, and a
+        self-hosted instance keeps queries off third-party infrastructure.
+        Raises ``ProviderError`` naming what is missing, so the scan can report
+        an actionable reason rather than silently finding nothing.
+        """
+        searxng = self._db.get_provider("searxng")
+        if searxng and searxng.get("enabled"):
+            base_url = str(searxng.get("config", {}).get("base_url", ""))
+            if not base_url:
+                raise ProviderError("searxng_url_missing")
+            return SearXNGProvider(base_url)
+
+        key = self._db.secrets.get_api_key("brave")
+        if key:
+            return BraveSearchProvider(key)
+
+        raise ProviderError("no_search_provider_configured")
+
     def _gather_candidates(
         self, subject: Subject, options: ScanOptions, stats: ScanStats
     ) -> list[tuple[SearchCandidate, bool]]:
@@ -118,14 +148,10 @@ class Scanner:
 
         search_provider = None
         if options.use_search:
-            key = self._db.secrets.get_api_key("brave")
-            if key:
-                try:
-                    search_provider = BraveSearchProvider(key)
-                except ProviderError as exc:
-                    stats.provider_errors.append(str(exc))
-            else:
-                stats.provider_errors.append("brave_api_key_missing")
+            try:
+                search_provider = self._select_provider()
+            except ProviderError as exc:
+                stats.provider_errors.append(str(exc))
 
         if search_provider is not None:
             for pq in plan.queries:

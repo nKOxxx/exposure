@@ -110,7 +110,7 @@ def test_case_endpoints(client: TestClient, seeded) -> None:  # type: ignore[no-
 
 def test_provider_endpoints(client: TestClient) -> None:
     listed = client.get("/api/v1/settings/providers").json()
-    assert {p["id"] for p in listed} == {"brave", "ai"}
+    assert {p["id"] for p in listed} == {"searxng", "brave", "ai"}
 
     updated = client.put(
         "/api/v1/settings/providers/brave", json={"enabled": True, "api_key": "sk-x"}

@@ -110,20 +110,59 @@ You do **not** need a search API key. The most private way to use Exposure:
 
 Nothing about you is ever sent to a third party this way.
 
-<details>
-<summary>Using the Brave Search API instead (optional)</summary>
+## Search providers (all optional)
 
-Exposure can run the queries for you via Brave. Get a key at
-[brave.com/search/api](https://brave.com/search/api) — note it is a paid API with
-a small monthly credit, not an unlimited free tier — then add it under
+| Provider | API key | Notes |
+|---|---|---|
+| **Manual URLs** | none | Always available. Nothing about you leaves your machine. |
+| **SearXNG** | **none** | Metasearch. Best with your own instance — see below. |
+| **Brave** | required | Paid API with a small monthly credit. |
+
+<details>
+<summary>SearXNG — the keyless option (recommended)</summary>
+
+[SearXNG](https://github.com/searxng/searxng) is self-hostable metasearch. Run it
+locally and Exposure will use it with no API key and no third party seeing your
+queries:
+
+```bash
+docker run -d --name searxng -p 8888:8080 \
+  -e SEARXNG_BASE_URL=http://127.0.0.1:8888/ \
+  docker.io/searxng/searxng:latest
+```
+
+Then enable **SearXNG** under **Settings** and set the instance URL to
+`http://127.0.0.1:8888`.
+
+You must enable the JSON output format in your instance's `settings.yml`:
+
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+
+Public instances mostly **disable the JSON API** or rate-limit it, so Exposure
+will report `searxng_json_api_disabled` / `searxng_json_api_blocked` rather than
+pretending it found nothing. Exposure ships **no default instance** on purpose:
+sending your own name to someone else's server should be a choice you make
+explicitly, not a default.
+</details>
+
+<details>
+<summary>Brave Search API (optional, paid)</summary>
+
+Get a key at [brave.com/search/api](https://brave.com/search/api) — a paid API
+with a small monthly credit, not an unlimited free tier — then add it under
 **Settings → brave**. The key is stored in your OS keyring or an encrypted local
 file; it is never written to the database, logs or exports.
+</details>
 
 Exposure deliberately does not depend on any single provider: Microsoft retired
 the Bing Search APIs in 2025 and Google's Custom Search JSON API is closed to new
 customers, so the provider interface is replaceable and the manual path always
 works.
-</details>
 
 ## What it asks you for
 
