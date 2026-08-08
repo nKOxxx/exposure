@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "exposure-scan"
+version = "0.2.0"
+description = "Local-first personal digital exposure and remediation engine"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Ares" }]
+keywords = ["privacy", "osint", "gdpr", "data-removal", "local-first"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Internet",
+]
+
+# Runtime dependencies are deliberately minimal. Every dependency widens the
+# SBOM and the attack surface (see spec section 29). We prefer the standard
+# library for anything trivial.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+    "httpx>=0.27",
+    "httpcore>=1.0",          # SSRF-guarded network backend hooks here
+    "tldextract>=5.1",        # configured offline (no suffix-list fetch)
+    "rapidfuzz>=3.6",
+    "cryptography>=42.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+pdf = ["pypdf>=4.0"]
+keyring = ["keyring>=24.0"]
+browser = ["playwright>=1.40"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "pip-audit>=2.7",
+    "types-PyYAML",
+]
+
+[project.scripts]
+exposure = "exposure.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/nKOxxx/exposure"
+Source = "https://github.com/nKOxxx/exposure"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/exposure"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"registry" = "exposure/registry"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning:exposure.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "C4", "SIM"]
+# S101 (assert) is fine in tests; handled per-file below.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["exposure"]
+strict = true
+warn_unreachable = true
+disallow_untyped_decorators = false
+
+# keyring is an optional extra; treat its absence as an untyped import.
+[[tool.mypy.overrides]]
+module = ["keyring", "keyring.*"]
+ignore_missing_imports = true

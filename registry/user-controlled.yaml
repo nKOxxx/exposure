@@ -1,0 +1,32 @@
+id: user_controlled_remove
+provider: "(you)"
+route_type: USER_CONTROLLED_REMOVE
+destination_kind: self_service
+jurisdictions:
+  - GLOBAL
+applies_to:
+  - SOCIAL_PROFILE
+  - USERNAME
+  - PROFESSIONAL_PROFILE
+  - CONTACT_EMAIL
+  - CONTACT_PHONE
+  - PERSONAL_LOCATION
+  - IMAGE_REFERENCE
+  - OTHER_PERSONAL_INFORMATION
+official_url: ""
+verification:
+  type: manual
+required_inputs:
+  - access to the account or site that publishes the information
+side_effects: >
+  This is the fastest and most reliable route when it applies: the information
+  is on a source you control (a public LinkedIn/GitHub field, an old profile, a
+  personal website, a public social post). You edit or remove it yourself. No
+  third party and no legal process is involved.
+informational: false
+description: >
+  Guidance to change or remove information on a source the subject controls.
+last_verified: 2026-08-08
+expires_after_days: 365
+sources:
+  - "https://support.google.com/websearch/answer/9673730?hl=en"

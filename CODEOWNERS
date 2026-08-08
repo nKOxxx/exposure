@@ -1,0 +1,8 @@
+# Registry governance (spec section 16, 30): every removal destination must be
+# reviewed. A poisoned registry could direct users to a phishing site.
+/registry/                @nKOxxx
+
+# Security-critical subsystems require review.
+/src/exposure/retrieval/  @nKOxxx
+/src/exposure/security/   @nKOxxx
+/src/exposure/ai/         @nKOxxx

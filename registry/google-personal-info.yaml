@@ -1,0 +1,34 @@
+id: google_personal_info
+provider: Google
+route_type: SEARCH_DELIST
+destination_kind: provider_portal
+jurisdictions:
+  - GLOBAL_LIMITED   # available to users 18+ in certain markets only
+applies_to:
+  - CONTACT_EMAIL
+  - CONTACT_PHONE
+  - HOME_ADDRESS
+  - DATE_OF_BIRTH
+  - PERSONAL_DOCUMENT
+official_url: "https://support.google.com/websearch/answer/12719076"
+portal_url: "https://myactivity.google.com/results-about-you"
+verification:
+  type: manual_or_provider_status
+required_inputs:
+  - the URL of the search result
+  - the search query that surfaces it
+  - which personal detail it exposes
+side_effects: >
+  Delisting removes or suppresses the result in Google Search only. It does NOT
+  delete the information from the website that hosts it. The content remains
+  reachable directly and may still appear in other search engines.
+informational: true
+description: >
+  Google's "Results about you" / remove-personal-information flow. Covers
+  name+phone, name+home address, name+email, and (since Feb 2026) government-ID
+  numbers. Rolling out to users over 18 in certain markets only.
+last_verified: 2026-08-08
+expires_after_days: 180
+sources:
+  - "https://support.google.com/websearch/answer/12719076?hl=en"
+  - "https://support.google.com/websearch/answer/9673730?hl=en"

@@ -1,0 +1,36 @@
+id: california_drop
+provider: California Privacy Protection Agency
+route_type: SOURCE_OPT_OUT
+destination_kind: provider_portal
+jurisdictions:
+  - US-CA
+applies_to:
+  - HOME_ADDRESS
+  - CONTACT_PHONE
+  - CONTACT_EMAIL
+  - PERSONAL_LOCATION
+  - DATE_OF_BIRTH
+  - PUBLIC_RECORD
+official_url: "https://consumer.drop.privacy.ca.gov/"
+portal_url: "https://consumer.drop.privacy.ca.gov/"
+verification:
+  type: manual
+required_inputs:
+  - a California residency / identity verification via the state portal
+side_effects: >
+  A single verified DROP request directs registered California data brokers to
+  delete your personal information. Brokers must process deletion requests at
+  least once every 45 days beginning August 1, 2026. This is a jurisdiction-wide
+  route and is preferred over submitting many broker-specific opt-out forms.
+  It does not affect the underlying public records themselves.
+informational: true
+description: >
+  California's Delete Request and Opt-out Platform (DROP) under the Delete Act
+  (SB 362). One request covers all registered data brokers. Consumer portal has
+  been open since January 1, 2026.
+last_verified: 2026-08-08
+expires_after_days: 180
+sources:
+  - "https://consumer.drop.privacy.ca.gov/"
+  - "https://privacy.ca.gov/drop/about-drop-and-the-delete-act/"
+  - "https://cppa.ca.gov/data_brokers/"

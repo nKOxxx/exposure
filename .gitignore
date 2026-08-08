@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Exposure local workspace (never commit personal data)
+*.sqlite3
+*.sqlite3-*
+exposure.db*
+/data/
+*.exposure-report.json
+*.exposure-report.html
+
+# OS
+.DS_Store
+
+# Secrets — must never be committed
+.secrets*
+*.key

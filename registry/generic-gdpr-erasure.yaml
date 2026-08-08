@@ -1,0 +1,38 @@
+id: generic_gdpr_erasure
+provider: "(the website's data controller)"
+route_type: SOURCE_DELETE
+destination_kind: controller_contact
+jurisdictions:
+  - EU
+  - EEA
+  - UK
+applies_to:
+  - CONTACT_EMAIL
+  - CONTACT_PHONE
+  - HOME_ADDRESS
+  - PERSONAL_LOCATION
+  - DATE_OF_BIRTH
+  - PERSONAL_DOCUMENT
+  - OTHER_PERSONAL_INFORMATION
+official_url: "https://gdpr-info.eu/art-17-gdpr/"
+verification:
+  type: manual
+required_inputs:
+  - the controller's contact or privacy/DPO address
+  - the exact URL and the personal data to be erased
+side_effects: >
+  A GDPR Article 17 erasure request goes to the site's data controller. The
+  right to erasure is NOT absolute: it has explicit exceptions including freedom
+  of expression and information, legal obligations, public-interest tasks,
+  archiving/research, and the establishment or defence of legal claims. Exposure
+  provides an informational template only and does not give legal advice.
+informational: true
+description: >
+  Generic GDPR right-to-erasure request to the publisher acting as data
+  controller. Use where the subject is in the EU/EEA/UK or the controller is
+  established there.
+last_verified: 2026-08-08
+expires_after_days: 365
+sources:
+  - "https://gdpr-info.eu/art-17-gdpr/"
+  - "https://commission.europa.eu/law/law-topic/data-protection_en"

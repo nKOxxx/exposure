@@ -1,0 +1,37 @@
+id: generic_publisher_contact
+provider: "(the website's owner)"
+route_type: CONTACT_PUBLISHER
+destination_kind: controller_contact
+jurisdictions:
+  - GLOBAL
+applies_to:
+  - CONTACT_EMAIL
+  - CONTACT_PHONE
+  - HOME_ADDRESS
+  - PERSONAL_LOCATION
+  - DATE_OF_BIRTH
+  - SOCIAL_PROFILE
+  - USERNAME
+  - IMAGE_REFERENCE
+  - PUBLIC_RECORD
+  - COMPANY_RECORD
+  - OTHER_PERSONAL_INFORMATION
+official_url: ""
+verification:
+  type: manual
+required_inputs:
+  - the site owner's contact, privacy, or abuse address (often on a /contact or /privacy page)
+  - the exact URL and the personal data of concern
+side_effects: >
+  Contacting the publisher is a MECHANISM, not a guaranteed outcome. The
+  publisher may decline. This route makes no legal claim; it is a polite request
+  to the site owner. Use a jurisdiction-specific route (GDPR, etc.) if you want
+  to assert a right.
+informational: true
+description: >
+  A generic, jurisdiction-neutral request to the owner of the page that hosts
+  the information. Works anywhere but relies on the publisher's cooperation.
+last_verified: 2026-08-08
+expires_after_days: 365
+sources:
+  - "https://www.ftc.gov/business-guidance/privacy-security"

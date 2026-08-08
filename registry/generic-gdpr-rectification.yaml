@@ -1,0 +1,31 @@
+id: generic_gdpr_rectification
+provider: "(the website's data controller)"
+route_type: SOURCE_CORRECT
+destination_kind: controller_contact
+jurisdictions:
+  - EU
+  - EEA
+  - UK
+applies_to:
+  - OUTDATED_INFORMATION
+  - INCORRECT_INFORMATION
+  - PROFESSIONAL_PROFILE
+official_url: "https://gdpr-info.eu/art-16-gdpr/"
+verification:
+  type: manual
+required_inputs:
+  - the controller's contact or privacy/DPO address
+  - the exact URL, the incorrect value, and the correct value
+side_effects: >
+  A GDPR Article 16 rectification request asks the controller to correct
+  inaccurate or outdated personal data. Correction is often more appropriate
+  than deletion for merely outdated information. Informational template only;
+  not legal advice.
+informational: true
+description: >
+  Generic GDPR right-to-rectification request for outdated or incorrect
+  information about the subject.
+last_verified: 2026-08-08
+expires_after_days: 365
+sources:
+  - "https://gdpr-info.eu/art-16-gdpr/"
