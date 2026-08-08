@@ -472,14 +472,14 @@ A factual item extracted from a source.
 Examples:
 
 ```text
-name = "Nikola Stojanow"
+name = "Jane Example"
 employment =
-    organisation: Bank Frick
+    organisation: Acme Corp
     role: Partner, New Ventures
 email =
-    n***@example.com
+    j***@example.com
 location =
-    Dubai
+    London
 ```
 
 Observation structure:

@@ -129,7 +129,13 @@ def load_registry(directory: str | Path | None = None) -> Registry:
     packaged copy, then the repo-root ``registry/`` (editable installs).
     """
     if directory is not None:
-        return Registry(_load_from_path(Path(directory)))
+        path = Path(directory)
+        if not path.is_dir():
+            # An unreadable registry must fail loudly. Returning an empty
+            # registry would present "no removal routes available" as a fact
+            # (spec section 35: never convert failure into absence).
+            raise FileNotFoundError(f"registry directory not found: {path}")
+        return Registry(_load_from_path(path))
     for candidate in _candidate_dirs():
         if candidate.is_dir() and any(candidate.glob("*.yaml")):
             return Registry(_load_from_path(candidate))

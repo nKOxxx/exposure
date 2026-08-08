@@ -4,10 +4,10 @@ from exposure.security.redaction import mask_email, mask_phone, redact
 
 
 def test_mask_email_keeps_domain() -> None:
-    out = mask_email("nikola@example.com")
+    out = mask_email("jane@example.com")
     assert out.endswith("@example.com")
-    assert out.startswith("n")
-    assert "nikola" not in out
+    assert out.startswith("j")
+    assert "jane" not in out
 
 
 def test_mask_phone_keeps_last_two() -> None:

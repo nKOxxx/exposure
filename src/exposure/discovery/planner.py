@@ -38,9 +38,12 @@ def plan_queries(subject: Subject, settings: Settings) -> DiscoveryPlan:
         add(PlannedQuery(text=f"site:{domain}", rationale="owned-domain", site=domain))
 
     # Sensitive identifiers last; flagged so they require opt-in.
+    #
+    # Email only. A phone number is never sent to a search provider even if one
+    # is present on the subject: searching it would disclose it to the provider,
+    # and the UI does not collect one. Phone numbers found *on a page* are still
+    # reported as findings.
     for email in subject.emails:
         add(PlannedQuery(text=f'"{email.value}"', sensitive=True, rationale="email"))
-    for phone in subject.phones:
-        add(PlannedQuery(text=f'"{phone.value}"', sensitive=True, rationale="phone"))
 
     return DiscoveryPlan(queries=queries)

@@ -23,7 +23,7 @@ _MASK_DOT = "•"
 
 
 def mask_email(value: str) -> str:
-    """``nikola@example.com`` -> ``n•••••@example.com`` (domain preserved)."""
+    """``jane@example.com`` -> ``j•••••@example.com`` (domain preserved)."""
     value = value.strip()
     if "@" not in value:
         return _MASK_DOT * max(len(value), 3)

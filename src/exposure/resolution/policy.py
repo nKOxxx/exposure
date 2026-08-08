@@ -26,6 +26,9 @@ W_PROFESSIONAL_EMPLOYER = 0.35
 
 # Contradiction penalties.
 P_LOCATION_CONFLICT = 0.45
+# The page is about someone else and merely mentions the subject. Weighted
+# heavily because on real pages this is the dominant false-positive mode.
+P_TOPIC_CONFLICT = 0.55
 
 # A username must be at least this long to be treated as distinctive.
 MIN_DISTINCTIVE_USERNAME = 4

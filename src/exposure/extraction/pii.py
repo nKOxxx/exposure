@@ -35,9 +35,38 @@ _POSTAL_RE = re.compile(
 )
 
 
+# Digit runs that are dates, not phone numbers. Live testing against real pages
+# showed ISO dates ("2026-08-05") and date ranges dominating phone matches.
+_DATE_SHAPED_RE = re.compile(
+    r"^\(?\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\)?$"      # 2026-08-05
+    r"|^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$"          # 05-08-2026
+    r"|^\d{4}[-–]\d{4}$"                            # 1815-1852
+)
+
+# A phone must look like a phone: either written internationally (leading +) or
+# announced by nearby context. Precision over recall (spec section 10).
+# Word boundaries matter: without them "Intelligence" contains "tel" and an ISBN
+# in a citation gets read as a telephone number (found by live testing).
+_PHONE_CONTEXT_RE = re.compile(
+    r"\b(tel|telephone|phone|mobile|cell|call|fax|whatsapp|contact)\b", re.IGNORECASE
+)
+
+# Identifier prefixes whose digit runs are never phone numbers.
+_NON_PHONE_PREFIX_RE = re.compile(
+    r"\b(isbn|issn|doi|ean|upc|vat|iban|swift|bic|asin|pmid|arxiv)\b[:\s]*$",
+    re.IGNORECASE,
+)
+
+
 def _phone_is_plausible(raw: str) -> bool:
     digits = [c for c in raw if c.isdigit()]
-    return 7 <= len(digits) <= 15
+    if not 7 <= len(digits) <= 15:
+        return False
+    if _DATE_SHAPED_RE.match(raw.strip()):
+        return False
+    # Reject runs that are mostly separators (typically tables of numbers).
+    separators = sum(1 for c in raw if c in " .-()")
+    return separators <= len(digits)
 
 
 def extract_pii(parsed: ParsedHTML) -> list[Extracted]:
@@ -67,10 +96,16 @@ def extract_pii(parsed: ParsedHTML) -> list[Extracted]:
             )
         )
 
-    # Phones
+    # Phones. A bare digit run in prose is almost never a phone number, so we
+    # require an international "+" prefix or an explicit nearby cue.
     for m in _PHONE_RE.finditer(text):
         raw = m.group(0).strip()
         if not _phone_is_plausible(raw):
+            continue
+        context = text[max(0, m.start() - 40) : m.start()]
+        if _NON_PHONE_PREFIX_RE.search(context):
+            continue  # ISBN/DOI/IBAN-style identifier, not a phone
+        if not raw.startswith("+") and not _PHONE_CONTEXT_RE.search(context):
             continue
         normalized = "".join(c for c in raw if c.isdigit() or c == "+")
         add(
@@ -85,19 +120,22 @@ def extract_pii(parsed: ParsedHTML) -> list[Extracted]:
             )
         )
 
-    # Dates and DOB
+    # Dates of birth. Only dates announced as a birth date are retained: a bare
+    # date maps to no finding category and no resolution signal, so persisting
+    # every date on a page would collect data the product cannot use
+    # (spec P2, section 9). Live testing found 246 such rows on two articles.
     for m in _DATE_RE.finditer(text):
         raw = m.group(0)
-        window_start = max(0, m.start() - 40)
-        context = text[window_start : m.start()]
-        is_dob = bool(_DOB_CONTEXT_RE.search(context))
+        context = text[max(0, m.start() - 40) : m.start()]
+        if not _DOB_CONTEXT_RE.search(context):
+            continue
         add(
             Extracted(
-                type=ObservationType.DATE_OF_BIRTH if is_dob else ObservationType.DATE,
+                type=ObservationType.DATE_OF_BIRTH,
                 value_normalized=raw.lower(),
                 display_value=raw,
                 evidence_snippet=snippet_around(text, raw),
-                is_sensitive=is_dob,
+                is_sensitive=True,
                 extractor=_EXTRACTOR,
                 extractor_version=_VERSION,
             )

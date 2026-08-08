@@ -22,14 +22,24 @@ _TRACKING_KEYS = frozenset(
 
 
 def registrable_domain(url_or_host: str) -> str:
-    """Return the eTLD+1 (e.g. ``bbc.co.uk``) or ``""`` if none."""
+    """Return the eTLD+1 (e.g. ``bbc.co.uk``), or the full host if unknown.
+
+    When the suffix list does not recognise the TLD (private, internal, or
+    reserved TLDs such as ``.example`` and ``.local``), fall back to the whole
+    hostname. Falling back to a single label would collapse unrelated hosts —
+    ``a.example`` and ``b.example`` would both become ``example`` — which would
+    group distinct sites together in matching and route selection.
+    """
     host = url_or_host
     if "://" in url_or_host:
         host = urlsplit(url_or_host).hostname or ""
+    host = host.strip().strip("[]").rstrip(".").lower()
+    if not host:
+        return ""
     ext = _extract(host)
     if ext.domain and ext.suffix:
         return f"{ext.domain}.{ext.suffix}".lower()
-    return (ext.domain or host).lower()
+    return host
 
 
 def _clean_query(query: str) -> str:

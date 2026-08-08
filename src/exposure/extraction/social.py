@@ -25,10 +25,19 @@ _PLATFORMS = {
     "t.me": "Telegram",
 }
 
-# Path segments that are not usernames.
-_NON_USER_SEGMENTS = {
-    "in", "pub", "company", "watch", "channel", "user", "u", "r", "feed", "posts",
+# Routing path segments that are never a handle, per platform. Platforms absent
+# from this map (Telegram, Twitter/X, Instagram, …) address profiles as a bare
+# first segment, so no segment is filtered for them.
+_ROUTING_SEGMENTS: dict[str, frozenset[str]] = {
+    "LinkedIn": frozenset({"in", "pub", "company", "school", "posts", "feed"}),
+    "YouTube": frozenset({"channel", "user", "c", "watch", "playlist", "shorts", "feed"}),
+    "Reddit": frozenset({"r", "u", "user", "comments"}),
+    "Facebook": frozenset({"pages", "groups", "profile.php", "posts", "watch"}),
+    "GitHub": frozenset({"orgs", "topics", "sponsors"}),
+    "Medium": frozenset({"tag", "search"}),
+    "TikTok": frozenset({"tag", "music"}),
 }
+_GENERIC_ROUTING = frozenset({"posts", "feed"})
 
 
 def parse_social(url: str) -> tuple[str, str | None] | None:
@@ -45,11 +54,11 @@ def parse_social(url: str) -> tuple[str, str | None] | None:
             break
     if platform is None:
         return None
+    routing = _ROUTING_SEGMENTS.get(platform, _GENERIC_ROUTING)
     segments = [s for s in parts.path.split("/") if s]
     username: str | None = None
     for seg in segments:
-        low = seg.lower()
-        if low in _NON_USER_SEGMENTS:
+        if seg.lower() in routing:
             continue
         if seg.startswith("@"):
             seg = seg[1:]

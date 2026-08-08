@@ -78,18 +78,26 @@
       <label>Usernames (comma-separated)</label><input id="f-user">
       <label>Personal domains (comma-separated)</label><input id="f-dom">
       <label>Emails <span class="warn">sensitive</span> (comma-separated)</label><input id="f-email">
-      <label>Phones <span class="warn">sensitive</span> (comma-separated)</label><input id="f-phone">
+      <p class="muted" style="margin:.4rem 0 0">
+        Exposure never asks for your phone number, date of birth, address or any
+        identity document. It still reports those when it finds them exposed
+        about you — it just doesn't need you to hand them over first.
+      </p>
       <div class="row" style="margin-top:.7rem">
         <button class="primary" id="btn-create">Save subject</button>
-        <span class="muted">Every field except name is optional. Sensitive fields are stored encrypted and masked.</span>
+        <span class="muted">Every field except name is optional. Your email is stored encrypted and always shown masked.</span>
       </div>
     </div>
 
     <div class="card" id="scanCard">
       <strong>Run a scan</strong>
       <label class="row" style="margin-top:.6rem"><input type="checkbox" id="opt-search" style="width:auto"> &nbsp;Use search provider (Brave)</label>
-      <label class="row"><input type="checkbox" id="opt-sensitive" style="width:auto"> &nbsp;<span class="warn">Also search using my email / phone (transmits them to the provider)</span></label>
+      <div class="muted" id="braveHint" style="margin:.2rem 0 .4rem 1.4rem"></div>
+      <label class="row"><input type="checkbox" id="opt-sensitive" style="width:auto"> &nbsp;<span class="warn">Also search using my email address (transmits it to the provider)</span></label>
       <label>Manual URLs to include (one per line)</label><textarea id="opt-manual" rows="3" placeholder="https://example.com/profile"></textarea>
+      <p class="muted">No API key? Leave the search box unticked, run the query
+      preview, search those queries yourself, and paste the URLs above. Exposure
+      works fully this way and nothing about you leaves your machine.</p>
       <div class="row" style="margin-top:.6rem">
         <button class="ghost" id="btn-preview">Preview queries that will leave my machine</button>
         <button class="primary" id="btn-scan">Run scan</button>
@@ -150,6 +158,27 @@ const csv = s => (s||'').split(',').map(x=>x.trim()).filter(Boolean);
 const lines = s => (s||'').split('\n').map(x=>x.trim()).filter(Boolean);
 const esc = s => { const d=document.createElement('div'); d.textContent = s==null?'':String(s); return d.innerHTML; };
 
+// Element IDs use hyphens, which are not valid JS identifiers — always go
+// through el() rather than relying on implicit window globals.
+const el = id => {
+  const node = document.getElementById(id);
+  if (!node) throw new Error(`missing element: ${id}`);
+  return node;
+};
+const val = id => el(id).value;
+
+// A handler that throws must never fail silently (spec section 35: never
+// convert failure into absence).
+function guard(fn) {
+  return async (...args) => {
+    try { return await fn(...args); }
+    catch (e) { toast('Error: ' + (e && e.message ? e.message : e)); throw e; }
+  };
+}
+window.addEventListener('error', e => toast('Script error: ' + e.message));
+window.addEventListener('unhandledrejection', e =>
+  toast('Error: ' + ((e.reason && e.reason.message) || e.reason)));
+
 // -- tab nav
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
@@ -177,42 +206,107 @@ function updateSubjectLabel(subs) {
 }
 document.getElementById('subjectPicker').onchange = e => { activeSubject = e.target.value; loadSubjects(); };
 
-document.getElementById('btn-create').onclick = async () => {
-  const name = document.getElementById('f-name').value.trim();
+el('btn-create').onclick = guard(async () => {
+  const name = val('f-name').trim();
   if (!name) { toast('Name is required'); return; }
-  const payload = { name, alt_names: csv(f_alt.value), city: f_city.value.trim()||null,
-    country: f_country.value.trim()||null, employers: csv(f_emp.value), usernames: csv(f_user.value),
-    personal_domains: csv(f_dom.value), emails: csv(f_email.value), phones: csv(f_phone.value) };
-  try { const s = await api('POST','/api/v1/subjects', payload); activeSubject = s.id;
-    toast('Subject saved'); await loadSubjects(); } catch(e){ toast('Error: '+e.message); }
-};
+  // Deliberately no phone field: Exposure does not ask for it (see the UI note).
+  const payload = { name, alt_names: csv(val('f-alt')), city: val('f-city').trim()||null,
+    country: val('f-country').trim()||null, employers: csv(val('f-emp')),
+    usernames: csv(val('f-user')), personal_domains: csv(val('f-dom')),
+    emails: csv(val('f-email')) };
+  const s = await api('POST','/api/v1/subjects', payload);
+  activeSubject = s.id;
+  toast('Subject saved');
+  await loadSubjects();
+});
 
-document.getElementById('btn-preview').onclick = async () => {
-  if (!activeSubject) { toast('Create/select a subject first'); return; }
+el('btn-preview').onclick = guard(async () => {
+  if (!await ensureSubject()) return;
   const plan = await api('GET', `/api/v1/subjects/${activeSubject}/scan-plan`);
-  const box = document.getElementById('planBox'); box.classList.remove('hidden');
+  const box = el('planBox'); box.classList.remove('hidden');
   box.innerHTML = '<div class="muted">These queries would be sent to the search provider:</div>' +
     plan.map(q=>`<div>• <code>${esc(q.text)}</code> ${q.sensitive?'<span class="warn">(sensitive — off unless you opt in)</span>':''}</div>`).join('');
-};
+});
 
-document.getElementById('btn-scan').onclick = async () => {
-  if (!activeSubject) { toast('Create/select a subject first'); return; }
-  const body = { use_search: opt_search.checked, include_sensitive: opt_sensitive.checked,
-                 manual_urls: lines(opt_manual.value) };
-  if (!body.use_search && body.manual_urls.length===0) { toast('Enable search or add manual URLs'); return; }
-  document.getElementById('scanStatus').textContent = 'starting…';
-  try {
-    const r = await api('POST', `/api/v1/subjects/${activeSubject}/scans`, body);
-    pollScan(r.scan_id);
-  } catch(e){ document.getElementById('scanStatus').textContent = 'error: '+e.message; }
+// If the user filled the form but never pressed Save, save it for them rather
+// than silently refusing to scan.
+async function ensureSubject() {
+  if (activeSubject) return true;
+  if (val('f-name').trim()) { await el('btn-create').onclick(); return !!activeSubject; }
+  toast('Enter your name and press Save subject first');
+  return false;
+}
+
+// Provider errors are machine codes; the user needs an action, not a code.
+const PROVIDER_ERRORS = {
+  brave_api_key_missing: 'no Brave API key — add one under Settings → brave, or use manual URLs',
+  brave_unauthorized:    'Brave rejected the API key — check it under Settings → brave',
+  brave_rate_limited:    'Brave rate-limited this scan — wait and retry, or use manual URLs',
+  brave_bad_json:        'Brave returned an unreadable response — retry later',
 };
+function explainProviderError(code) {
+  if (PROVIDER_ERRORS[code]) return PROVIDER_ERRORS[code];
+  if (code.startsWith('brave_http_')) return `Brave returned HTTP ${code.slice(11)}`;
+  if (code.startsWith('brave_request_failed')) return 'could not reach Brave — check your connection';
+  return code;
+}
+
+async function braveKeyPresent() {
+  const provs = await api('GET', '/api/v1/settings/providers');
+  const brave = provs.find(p => p.id === 'brave');
+  return !!(brave && brave.has_key);
+}
+
+// Tell the user up front whether the search box will actually work.
+async function refreshBraveHint() {
+  const hint = el('braveHint');
+  if (await braveKeyPresent()) {
+    hint.textContent = 'API key set — search is available.';
+    return;
+  }
+  hint.innerHTML =
+    'No Brave API key yet. Add one under <strong>Settings → brave</strong>, or ' +
+    'leave this unticked and use manual URLs. Keys come from ' +
+    '<code>brave.com/search/api</code> (paid, with a small monthly credit).';
+}
+
+el('btn-scan').onclick = guard(async () => {
+  if (!await ensureSubject()) return;
+  const body = { use_search: el('opt-search').checked,
+                 include_sensitive: el('opt-sensitive').checked,
+                 manual_urls: lines(val('opt-manual')) };
+  if (!body.use_search && body.manual_urls.length===0) {
+    toast('Enable the search provider or add at least one manual URL');
+    el('scanStatus').textContent = 'not started — no search provider and no manual URLs';
+    return;
+  }
+  // Pre-flight: a missing key would otherwise surface as a bare error code
+  // after the scan had already run.
+  if (body.use_search && !await braveKeyPresent()) {
+    if (body.manual_urls.length === 0) {
+      el('scanStatus').textContent =
+        'not started — search is ticked but no Brave API key is set. ' +
+        'Add a key under Settings → brave, or untick search and use manual URLs.';
+      toast('No Brave API key — see Settings, or use manual URLs');
+      await refreshBraveHint();
+      return;
+    }
+    toast('No Brave API key — scanning your manual URLs only');
+    body.use_search = false;
+  }
+  el('scanStatus').textContent = 'starting…';
+  const r = await api('POST', `/api/v1/subjects/${activeSubject}/scans`, body);
+  pollScan(r.scan_id);
+});
 async function pollScan(id) {
   const st = document.getElementById('scanStatus');
   for (let i=0;i<120;i++) {
     const s = await api('GET', `/api/v1/scans/${id}`);
     st.textContent = `scan ${s.status.toLowerCase()} — ${s.stats.findings||0} findings, ${s.stats.retrieved||0} retrieved`;
     if (s.status !== 'RUNNING') {
-      if ((s.stats.provider_errors||[]).length) st.textContent += ' ⚠ provider issue: '+s.stats.provider_errors.join(', ');
+      for (const err of (s.stats.provider_errors || [])) {
+        st.textContent += ' ⚠ ' + explainProviderError(err);
+      }
       return;
     }
     await new Promise(r=>setTimeout(r, 700));
@@ -328,17 +422,19 @@ window.saveProvider = async (id) => {
   const k = document.getElementById('key-'+id).value.trim(); if (k) body.api_key = k;
   await api('PUT', `/api/v1/settings/providers/${id}`, body); toast('Saved'); loadProviders();
 };
-document.getElementById('btn-export').onclick = async () => {
+el('btn-export').onclick = guard(async () => {
   if (!activeSubject) { toast('Select a subject'); return; }
   const r = await api('POST', `/api/v1/exports?subject_id=${activeSubject}`);
-  document.getElementById('exportStatus').textContent = 'Wrote '+r.html;
-};
-document.getElementById('btn-delete-all').onclick = async () => {
+  el('exportStatus').textContent = 'Wrote ' + r.html;
+});
+el('btn-delete-all').onclick = guard(async () => {
   if (!confirm('Delete ALL Exposure data on this machine? This cannot be undone.')) return;
-  await api('POST','/api/v1/danger/delete-all'); toast('All data deleted'); activeSubject=null; loadSubjects();
-};
+  await api('POST','/api/v1/danger/delete-all');
+  toast('All data deleted'); activeSubject = null; await loadSubjects();
+});
 
-loadSubjects();
+loadSubjects().catch(e => toast('Startup error: ' + e.message));
+refreshBraveHint().catch(() => {});
 </script>
 </body>
 </html>

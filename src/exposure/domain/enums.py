@@ -23,28 +23,33 @@ class Severity(StrEnum):
     def rank(self) -> int:
         return _SEVERITY_ORDER.index(self)
 
-    # NOTE: Severity subclasses ``str``, so we must override ALL four rich
-    # comparisons — otherwise ``>``/``>=``/``max()`` would fall back to str's
+    # Severity subclasses ``str``, so all four rich comparisons must be
+    # overridden — otherwise ``>``/``>=``/``max()`` fall back to str's
     # lexicographic ordering ("HIGH" < "MODERATE") instead of severity rank.
-    def __lt__(self, other: object) -> bool:
+    #
+    # Comparing against a bare string raises rather than returning
+    # NotImplemented: because Severity *is* a str, NotImplemented would let
+    # Python satisfy the comparison with str's reflected operator and silently
+    # produce a lexicographic answer inside risk prioritisation.
+    @staticmethod
+    def _rank_of(other: object) -> int:
         if not isinstance(other, Severity):
-            return NotImplemented
-        return self.rank < other.rank
+            raise TypeError(
+                f"Severity is only ordered against Severity, not {type(other).__name__}"
+            )
+        return other.rank
+
+    def __lt__(self, other: object) -> bool:
+        return self.rank < self._rank_of(other)
 
     def __le__(self, other: object) -> bool:
-        if not isinstance(other, Severity):
-            return NotImplemented
-        return self.rank <= other.rank
+        return self.rank <= self._rank_of(other)
 
     def __gt__(self, other: object) -> bool:
-        if not isinstance(other, Severity):
-            return NotImplemented
-        return self.rank > other.rank
+        return self.rank > self._rank_of(other)
 
     def __ge__(self, other: object) -> bool:
-        if not isinstance(other, Severity):
-            return NotImplemented
-        return self.rank >= other.rank
+        return self.rank >= self._rank_of(other)
 
 
 _SEVERITY_ORDER = [
