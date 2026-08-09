@@ -230,6 +230,15 @@ auto-confirmed because it mentioned the subject. That write-up is in
 [docs/LIVE_SCAN_RESULTS.md](docs/LIVE_SCAN_RESULTS.md), including what is still
 unproven.
 
+## How it compares to people-search sites
+
+Sites like reverselookup.com, Spokeo or BeenVerified are **finders** — you pay a
+subscription to look up *other* people. Exposure is the opposite: a free,
+local **fixer** for looking up *yourself* and getting the results removed. One of
+those people-search sites is the kind of place Exposure helps you delete yourself
+from. Full breakdown, including where Exposure is weaker (data breadth, and
+out-of-the-box search convenience): [docs/COMPARISON.md](docs/COMPARISON.md).
+
 ## Scope and limits
 
 Deliberately **not** built, as a security boundary rather than a roadmap:

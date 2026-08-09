@@ -91,19 +91,41 @@
 
     <div class="card" id="scanCard">
       <strong>Run a scan</strong>
-      <label class="row" style="margin-top:.6rem"><input type="checkbox" id="opt-search" style="width:auto"> &nbsp;Use search provider (Brave)</label>
-      <div class="muted" id="braveHint" style="margin:.2rem 0 .4rem 1.4rem"></div>
-      <label class="row"><input type="checkbox" id="opt-sensitive" style="width:auto"> &nbsp;<span class="warn">Also search using my email address (transmits it to the provider)</span></label>
-      <label>Manual URLs to include (one per line)</label><textarea id="opt-manual" rows="3" placeholder="https://example.com/profile"></textarea>
-      <p class="muted">No API key? Leave the search box unticked, run the query
-      preview, search those queries yourself, and paste the URLs above. Exposure
-      works fully this way and nothing about you leaves your machine.</p>
-      <div class="row" style="margin-top:.6rem">
-        <button class="ghost" id="btn-preview">Preview queries that will leave my machine</button>
+
+      <!-- Assisted search: the always-works, zero-setup path. Your own browser
+           does the searching, so there is no bot-detection and nothing about
+           you passes through a third-party API. -->
+      <div style="margin-top:.6rem">
+        <div class="row" style="justify-content:space-between; align-items:baseline">
+          <strong style="font-size:.95rem">1 · Search for yourself</strong>
+          <select id="engine" style="max-width:11rem">
+            <option value="https://www.google.com/search?q=">Google</option>
+            <option value="https://duckduckgo.com/?q=">DuckDuckGo</option>
+            <option value="https://www.bing.com/search?q=">Bing</option>
+          </select>
+        </div>
+        <p class="muted">No API key, nothing to install. Click a query — it opens
+        in your browser. Copy the result links that are about you into the box
+        below. Exposure never sees your searches this way.</p>
+        <button class="ghost" id="btn-preview">Show my search links</button>
+        <div id="planBox" class="hidden" style="margin-top:.5rem"></div>
+      </div>
+
+      <label style="margin-top:1rem">2 · Paste the URLs you found (one per line)</label>
+      <textarea id="opt-manual" rows="4" placeholder="https://www.linkedin.com/in/you
+https://somebroker.example/profile/you"></textarea>
+
+      <details style="margin-top:.8rem">
+        <summary class="muted">Or let a search provider do it automatically (optional)</summary>
+        <label class="row" style="margin-top:.5rem"><input type="checkbox" id="opt-search" style="width:auto"> &nbsp;Use a configured search provider</label>
+        <div class="muted" id="braveHint" style="margin:.2rem 0 .4rem 1.4rem"></div>
+        <label class="row"><input type="checkbox" id="opt-sensitive" style="width:auto"> &nbsp;<span class="warn">Also search using my email address (transmits it to the provider)</span></label>
+      </details>
+
+      <div class="row" style="margin-top:.8rem">
         <button class="primary" id="btn-scan">Run scan</button>
         <span class="muted" id="scanStatus"></span>
       </div>
-      <div id="planBox" class="hidden" style="margin-top:.6rem"></div>
     </div>
   </section>
 
@@ -223,10 +245,26 @@ el('btn-create').onclick = guard(async () => {
 el('btn-preview').onclick = guard(async () => {
   if (!await ensureSubject()) return;
   const plan = await api('GET', `/api/v1/subjects/${activeSubject}/scan-plan`);
+  const engine = el('engine').value;
   const box = el('planBox'); box.classList.remove('hidden');
-  box.innerHTML = '<div class="muted">These queries would be sent to the search provider:</div>' +
-    plan.map(q=>`<div>• <code>${esc(q.text)}</code> ${q.sensitive?'<span class="warn">(sensitive — off unless you opt in)</span>':''}</div>`).join('');
+  // Each query is a link into the user's chosen engine, opened in a new tab.
+  // The search runs in their own browser session — no bot detection, and
+  // nothing about them passes through Exposure or any API.
+  box.innerHTML =
+    '<div class="muted">Click each to search in your browser, then copy the ' +
+    'links that are really about you into the box below:</div>' +
+    plan.map(q => {
+      const href = engine + encodeURIComponent(q.text);
+      const warn = q.sensitive
+        ? ' <span class="warn">(your email — only if you\'re comfortable searching it)</span>' : '';
+      return `<div style="margin:.2rem 0">🔎 <a href="${esc(href)}" target="_blank" rel="noreferrer noopener">${esc(q.text)}</a>${warn}</div>`;
+    }).join('') +
+    `<button class="ghost" style="margin-top:.4rem" onclick='copyQueries(${JSON.stringify(plan.map(q=>q.text))})'>Copy all queries</button>`;
 });
+window.copyQueries = (queries) => {
+  if (navigator.clipboard) navigator.clipboard.writeText(queries.join('\n'));
+  toast('Queries copied');
+};
 
 // If the user filled the form but never pressed Save, save it for them rather
 // than silently refusing to scan.
