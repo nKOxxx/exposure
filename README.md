@@ -99,24 +99,41 @@ exposure --help
   --no-browser  don't open a browser
 ```
 
-## First scan, without any API key
+## First scan — no key, no setup
 
-You do **not** need a search API key. The most private way to use Exposure:
+1. Open the **Me** tab, enter your name (everything else is optional), **Save**.
+2. Leave **Find pages about me automatically** ticked and click **Run scan**.
 
-1. Open the **Me** tab and enter your name (everything else is optional).
-2. Click **Preview queries that will leave my machine**.
-3. Run those searches yourself in your own browser.
-4. Paste the interesting URLs into **Manual URLs** and click **Run scan**.
+That's it. Exposure searches DuckDuckGo for you — **no API key, nothing to
+install** — retrieves the pages it finds, and tells you which ones are really
+about you and which matter.
 
-Nothing about you is ever sent to a third party this way.
+DuckDuckGo occasionally rate-limits automated search. If a scan comes back
+"incomplete", wait a minute and retry, or use one of the alternatives below.
+Exposure always tells you a search was rate-limited rather than pretending it
+found nothing.
+
+### Fully private / offline-of-third-parties alternatives
+
+Prefer that *nothing* about you touches any external search service?
+
+- **Search by hand:** expand *"Add pages myself, or search by hand"*, click each
+  query to run it in your own browser, and paste the result URLs. Only the pages
+  you choose are ever fetched.
+- **Self-host SearXNG** (see below) for automatic search with no third party.
 
 ## Search providers (all optional)
 
 | Provider | API key | Notes |
 |---|---|---|
-| **Manual URLs** | none | Always available. Nothing about you leaves your machine. |
-| **SearXNG** | **none** | Metasearch. Best with your own instance — see below. |
-| **Brave** | required | Paid API with a small monthly credit. |
+| **DuckDuckGo** | **none** | **Default.** Zero setup, automatic. May be rate-limited. |
+| **Manual URLs** | none | You paste URLs. Nothing about you leaves your machine. |
+| **SearXNG** | **none** | Automatic + private, but you self-host the instance. |
+| **Brave** | required | Paid API with a small monthly credit; most reliable. |
+
+When more than one is available, Exposure prefers a self-hosted SearXNG, then a
+Brave key, then falls back to DuckDuckGo — so the automatic default always works
+while letting you upgrade reliability if you want.
 
 <details>
 <summary>SearXNG — the keyless option (recommended)</summary>

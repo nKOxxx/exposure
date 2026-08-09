@@ -439,13 +439,35 @@ class Service:
 
     def list_providers(self) -> list[dict[str, Any]]:
         known = {p["id"]: p for p in self.db.list_providers()}
-        out = []
+        # DuckDuckGo is the keyless, always-available default; it has no stored
+        # settings row and needs no configuration.
+        out: list[dict[str, Any]] = [
+            {
+                "id": "duckduckgo",
+                "kind": "search",
+                "enabled": True,
+                "config": {},
+                "has_key": False,
+                "needs_key": False,
+                "always_available": True,
+            }
+        ]
         for pid, kind in (("searxng", "search"), ("brave", "search"), ("ai", "ai")):
             row = known.get(pid, {"id": pid, "kind": kind, "enabled": False, "config": {}})
             row["has_key"] = self.db.secrets.get_api_key(pid) is not None
             row["needs_key"] = pid != "searxng"
+            row["always_available"] = False
             out.append(row)
         return out
+
+    def active_search_provider(self) -> str:
+        """Which provider a scan would use right now (honest UI pre-flight)."""
+        searxng = self.db.get_provider("searxng")
+        if searxng and searxng.get("enabled") and searxng.get("config", {}).get("base_url"):
+            return "searxng"
+        if self.db.secrets.get_api_key("brave"):
+            return "brave"
+        return "duckduckgo"
 
     def set_provider(self, provider_id: str, payload: ProviderUpdate) -> dict[str, Any]:
         kind = "search" if provider_id in ("brave", "searxng") else "ai"

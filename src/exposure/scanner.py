@@ -29,6 +29,7 @@ from exposure.discovery import (
 )
 from exposure.discovery.providers import (
     BraveSearchProvider,
+    DuckDuckGoProvider,
     ManualURLProvider,
     SearXNGProvider,
 )
@@ -118,12 +119,18 @@ class Scanner:
         return scan_id, self.run_existing(scan_id, subject, options)
 
     def _select_provider(self) -> DiscoveryProvider:
-        """Pick the configured search provider.
+        """Pick the search provider, preferring reliability where configured.
 
-        SearXNG is preferred when configured because it needs no API key, and a
-        self-hosted instance keeps queries off third-party infrastructure.
-        Raises ``ProviderError`` naming what is missing, so the scan can report
-        an actionable reason rather than silently finding nothing.
+        Order:
+        1. SearXNG if the user configured a self-hosted instance (keyless, and
+           keeps queries off third-party infrastructure);
+        2. Brave if an API key is set (most reliable results);
+        3. DuckDuckGo — the keyless, zero-setup default so "search for me" works
+           out of the box with nothing configured.
+
+        Because a usable default always exists, this never raises for "nothing
+        configured". It still returns a provider whose own errors (e.g. a
+        DuckDuckGo rate-limit) are surfaced as an *incomplete* scan.
         """
         searxng = self._db.get_provider("searxng")
         if searxng and searxng.get("enabled"):
@@ -136,7 +143,7 @@ class Scanner:
         if key:
             return BraveSearchProvider(key)
 
-        raise ProviderError("no_search_provider_configured")
+        return DuckDuckGoProvider()
 
     def _gather_candidates(
         self, subject: Subject, options: ScanOptions, stats: ScanStats

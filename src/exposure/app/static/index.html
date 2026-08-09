@@ -92,34 +92,29 @@
     <div class="card" id="scanCard">
       <strong>Run a scan</strong>
 
-      <!-- Assisted search: the always-works, zero-setup path. Your own browser
-           does the searching, so there is no bot-detection and nothing about
-           you passes through a third-party API. -->
-      <div style="margin-top:.6rem">
-        <div class="row" style="justify-content:space-between; align-items:baseline">
-          <strong style="font-size:.95rem">1 · Search for yourself</strong>
-          <select id="engine" style="max-width:11rem">
+      <!-- Automatic search is the default: the tool finds the URLs. DuckDuckGo
+           needs no key and no setup; Brave/SearXNG can be configured under
+           Settings for reliability. -->
+      <label class="row" style="margin-top:.6rem"><input type="checkbox" id="opt-search" checked style="width:auto"> &nbsp;Find pages about me automatically</label>
+      <div class="muted" id="braveHint" style="margin:.2rem 0 .4rem 1.4rem"></div>
+      <label class="row" style="margin-left:1.4rem"><input type="checkbox" id="opt-sensitive" style="width:auto"> &nbsp;<span class="warn">Also search using my email address (transmits it to the search provider)</span></label>
+
+      <details style="margin-top:.8rem">
+        <summary class="muted">Add pages myself, or search by hand (optional)</summary>
+        <p class="muted" style="margin-top:.5rem">If automatic search is
+        rate-limited, or you'd rather nothing leave your machine, click a query
+        to search in your own browser and paste the result URLs below.</p>
+        <div class="row" style="align-items:baseline">
+          <button class="ghost" id="btn-preview">Show my search links</button>
+          <select id="engine" style="max-width:10rem">
             <option value="https://www.google.com/search?q=">Google</option>
             <option value="https://duckduckgo.com/?q=">DuckDuckGo</option>
             <option value="https://www.bing.com/search?q=">Bing</option>
           </select>
         </div>
-        <p class="muted">No API key, nothing to install. Click a query — it opens
-        in your browser. Copy the result links that are about you into the box
-        below. Exposure never sees your searches this way.</p>
-        <button class="ghost" id="btn-preview">Show my search links</button>
-        <div id="planBox" class="hidden" style="margin-top:.5rem"></div>
-      </div>
-
-      <label style="margin-top:1rem">2 · Paste the URLs you found (one per line)</label>
-      <textarea id="opt-manual" rows="4" placeholder="https://www.linkedin.com/in/you
-https://somebroker.example/profile/you"></textarea>
-
-      <details style="margin-top:.8rem">
-        <summary class="muted">Or let a search provider do it automatically (optional)</summary>
-        <label class="row" style="margin-top:.5rem"><input type="checkbox" id="opt-search" style="width:auto"> &nbsp;Use a configured search provider</label>
-        <div class="muted" id="braveHint" style="margin:.2rem 0 .4rem 1.4rem"></div>
-        <label class="row"><input type="checkbox" id="opt-sensitive" style="width:auto"> &nbsp;<span class="warn">Also search using my email address (transmits it to the provider)</span></label>
+        <div id="planBox" class="hidden" style="margin:.4rem 0"></div>
+        <label>Manual URLs (one per line)</label>
+        <textarea id="opt-manual" rows="3" placeholder="https://www.linkedin.com/in/you"></textarea>
       </details>
 
       <div class="row" style="margin-top:.8rem">
@@ -277,11 +272,13 @@ async function ensureSubject() {
 
 // Provider errors are machine codes; the user needs an action, not a code.
 const PROVIDER_ERRORS = {
-  no_search_provider_configured:
-    'no search provider configured — enable SearXNG (no key needed) or add a Brave key under Settings',
-  brave_api_key_missing: 'no Brave API key — add one under Settings → brave, or use manual URLs',
+  duckduckgo_rate_limited:
+    'DuckDuckGo rate-limited this scan (it happens) — wait a minute and retry, ' +
+    'or use the manual search links below, or configure Brave/SearXNG under Settings',
+  duckduckgo_timeout: 'DuckDuckGo timed out — retry, or use the manual search links below',
+  brave_api_key_missing: 'no Brave API key — add one under Settings → brave',
   brave_unauthorized:    'Brave rejected the API key — check it under Settings → brave',
-  brave_rate_limited:    'Brave rate-limited this scan — wait and retry, or use manual URLs',
+  brave_rate_limited:    'Brave rate-limited this scan — wait and retry',
   brave_bad_json:        'Brave returned an unreadable response — retry later',
   searxng_url_missing:   'SearXNG is enabled but has no instance URL — set one under Settings → searxng',
   searxng_url_bad_scheme: 'SearXNG instance URL must start with http:// or https://',
@@ -292,6 +289,7 @@ const PROVIDER_ERRORS = {
 };
 function explainProviderError(code) {
   if (PROVIDER_ERRORS[code]) return PROVIDER_ERRORS[code];
+  if (code.startsWith('duckduckgo_failed')) return 'DuckDuckGo search failed — retry, or use the manual links below';
   if (code.startsWith('brave_http_')) return `Brave returned HTTP ${code.slice(11)}`;
   if (code.startsWith('brave_request_failed')) return 'could not reach Brave — check your connection';
   if (code.startsWith('searxng_http_')) return `SearXNG returned HTTP ${code.slice(13)}`;
@@ -299,17 +297,17 @@ function explainProviderError(code) {
   return code;
 }
 
-// Which search provider, if any, is actually usable right now.
+// Which provider a scan will use right now. DuckDuckGo is the always-available
+// keyless default, so this never returns null.
 async function activeSearchProvider() {
   const provs = await api('GET', '/api/v1/settings/providers');
   const sx = provs.find(p => p.id === 'searxng');
   if (sx && sx.enabled && sx.config && sx.config.base_url) return 'searxng';
   const brave = provs.find(p => p.id === 'brave');
   if (brave && brave.has_key) return 'brave';
-  return null;
+  return 'duckduckgo';
 }
 
-// Tell the user up front whether the search box will actually work.
 async function refreshBraveHint() {
   const hint = el('braveHint');
   const provider = await activeSearchProvider();
@@ -319,9 +317,9 @@ async function refreshBraveHint() {
     hint.textContent = 'Using Brave (API key set).';
   } else {
     hint.innerHTML =
-      'No search provider yet. Easiest keyless option: enable <strong>SearXNG</strong> ' +
-      'under Settings and point it at your own instance. Otherwise leave this ' +
-      'unticked and use manual URLs below — that works fully and sends nothing.';
+      'Using <strong>DuckDuckGo</strong> — no key, no setup. If it gets ' +
+      'rate-limited, retry, use the manual links below, or set up Brave/SearXNG ' +
+      'under Settings for reliability.';
   }
 }
 
@@ -331,26 +329,11 @@ el('btn-scan').onclick = guard(async () => {
                  include_sensitive: el('opt-sensitive').checked,
                  manual_urls: lines(val('opt-manual')) };
   if (!body.use_search && body.manual_urls.length===0) {
-    toast('Enable the search provider or add at least one manual URL');
-    el('scanStatus').textContent = 'not started — no search provider and no manual URLs';
+    toast('Keep automatic search on, or add at least one manual URL');
+    el('scanStatus').textContent = 'not started — automatic search is off and no manual URLs were given';
     return;
   }
-  // Pre-flight: an unconfigured provider would otherwise surface as a bare
-  // error code after the scan had already run.
-  if (body.use_search && !await activeSearchProvider()) {
-    if (body.manual_urls.length === 0) {
-      el('scanStatus').textContent =
-        'not started — search is ticked but no provider is configured. ' +
-        'Enable SearXNG (no key needed) or add a Brave key under Settings, ' +
-        'or untick search and use manual URLs.';
-      toast('No search provider — see Settings, or use manual URLs');
-      await refreshBraveHint();
-      return;
-    }
-    toast('No search provider — scanning your manual URLs only');
-    body.use_search = false;
-  }
-  el('scanStatus').textContent = 'starting…';
+  el('scanStatus').textContent = 'searching…';
   const r = await api('POST', `/api/v1/subjects/${activeSubject}/scans`, body);
   pollScan(r.scan_id);
 });

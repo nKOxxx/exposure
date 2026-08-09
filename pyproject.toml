@@ -35,6 +35,7 @@ dependencies = [
     "rapidfuzz>=3.6",
     "cryptography>=42.0",
     "pyyaml>=6.0",
+    "ddgs>=9.0",              # keyless DuckDuckGo discovery (zero-setup default)
 ]
 
 [project.optional-dependencies]

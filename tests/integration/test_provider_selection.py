@@ -9,7 +9,11 @@ from exposure.app.schemas import ProviderUpdate, ScanCreate, SubjectCreate
 from exposure.app.service import Service, ServiceError
 from exposure.config import Settings
 from exposure.discovery.provider import ProviderError
-from exposure.discovery.providers import BraveSearchProvider, SearXNGProvider
+from exposure.discovery.providers import (
+    BraveSearchProvider,
+    DuckDuckGoProvider,
+    SearXNGProvider,
+)
 from exposure.domain.models import Name, Subject
 from exposure.scanner import Scanner, ScanOptions
 from exposure.storage.database import Database
@@ -34,9 +38,11 @@ def _subject(db: Database) -> Subject:
 # --------------------------------------------------------------------------- #
 
 
-def test_no_provider_configured_is_named_clearly(db: Database, settings: Settings) -> None:
-    with pytest.raises(ProviderError, match="no_search_provider_configured"):
-        _scanner(db, settings)._select_provider()
+def test_defaults_to_duckduckgo_with_nothing_configured(
+    db: Database, settings: Settings
+) -> None:
+    """Search must work out of the box: DuckDuckGo is the keyless default."""
+    assert isinstance(_scanner(db, settings)._select_provider(), DuckDuckGoProvider)
 
 
 def test_brave_used_when_key_present(db: Database, settings: Settings) -> None:
@@ -65,11 +71,41 @@ def test_enabled_searxng_without_url_is_an_explicit_error(
         _scanner(db, settings)._select_provider()
 
 
-def test_scan_without_provider_reports_incomplete(db: Database, settings: Settings) -> None:
-    """Never present a provider gap as 'no findings'."""
+def test_duckduckgo_rate_limit_reports_incomplete(
+    db: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rate-limited default provider must read as incomplete, not 'no findings'."""
+    import exposure.scanner as scanner_mod
+
+    class _RateLimited:
+        id = "duckduckgo"
+
+        def search(self, query, limit):  # type: ignore[no-untyped-def]
+            raise ProviderError("duckduckgo_rate_limited")
+
+    monkeypatch.setattr(scanner_mod, "DuckDuckGoProvider", lambda: _RateLimited())
     scan_id, stats = _scanner(db, settings).run(_subject(db), ScanOptions(use_search=True))
-    assert "no_search_provider_configured" in stats.provider_errors
+    assert "duckduckgo_rate_limited" in stats.provider_errors
     assert db.get_scan(scan_id)["status"] == "INCOMPLETE"
+
+
+def test_duckduckgo_results_flow_into_a_scan(
+    db: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import exposure.scanner as scanner_mod
+
+    class _Stub:
+        id = "duckduckgo"
+
+        def search(self, query, limit):  # type: ignore[no-untyped-def]
+            from exposure.discovery.provider import SearchCandidate
+
+            return [SearchCandidate(url="https://found.example/p", provider=self.id)]
+
+    monkeypatch.setattr(scanner_mod, "DuckDuckGoProvider", lambda: _Stub())
+    _, stats = _scanner(db, settings).run(_subject(db), ScanOptions(use_search=True))
+    assert stats.queries_run > 0 and stats.retrieved == 1
+    assert not stats.provider_errors
 
 
 def test_searxng_results_flow_into_a_scan(
@@ -100,9 +136,20 @@ def test_searxng_results_flow_into_a_scan(
 
 def test_providers_listed_with_key_requirement(service: Service) -> None:
     provs = {p["id"]: p for p in service.list_providers()}
-    assert set(provs) == {"searxng", "brave", "ai"}
+    assert set(provs) == {"duckduckgo", "searxng", "brave", "ai"}
+    assert provs["duckduckgo"]["always_available"] is True
+    assert provs["duckduckgo"]["needs_key"] is False
     assert provs["searxng"]["needs_key"] is False
     assert provs["brave"]["needs_key"] is True
+
+
+def test_active_provider_defaults_to_duckduckgo(service: Service) -> None:
+    assert service.active_search_provider() == "duckduckgo"
+
+
+def test_active_provider_prefers_brave_key(service: Service) -> None:
+    service.db.secrets.set_api_key("brave", "sk-test")
+    assert service.active_search_provider() == "brave"
 
 
 def test_configuring_searxng_persists_url(service: Service) -> None:
@@ -137,7 +184,22 @@ def test_searxng_url_is_not_treated_as_a_secret(service: Service) -> None:
     assert stored["config"]["base_url"] == "http://127.0.0.1:8888"
 
 
-def test_scan_via_api_reports_missing_provider(service: Service) -> None:
+def test_scan_via_api_uses_duckduckgo_by_default(
+    service: Service, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With nothing configured, an API-triggered scan still searches (via DDG)."""
+    import exposure.scanner as scanner_mod
+
+    class _Stub:
+        id = "duckduckgo"
+
+        def search(self, query, limit):  # type: ignore[no-untyped-def]
+            from exposure.discovery.provider import SearchCandidate
+
+            return [SearchCandidate(url="https://found.example/p", provider=self.id)]
+
+    monkeypatch.setattr(scanner_mod, "DuckDuckGoProvider", lambda: _Stub())
     subject = service.create_subject(SubjectCreate(name="Jane Example"))
     _, stats = service.start_scan(subject.id, ScanCreate(use_search=True))
-    assert "no_search_provider_configured" in stats.provider_errors
+    assert stats.queries_run > 0
+    assert not stats.provider_errors

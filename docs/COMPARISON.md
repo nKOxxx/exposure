@@ -55,12 +55,13 @@ that we don't:
    honest way to close this: let the user paste a broker's own "here's what we
    have on you" page in as a source.
 
-2. **Zero-setup search.** They have search built in; you type a name and get
-   results. Exposure now offers **one-click assisted search** (it builds the
-   queries and opens them in your own browser — private, free, no key) and
-   optional Brave/SearXNG providers, but there is still no "type name → instant
-   results" with nothing configured, because no free web-search API exists that
-   would allow it without breaking. This is a genuine friction gap.
+2. **Zero-setup search — now largely closed.** Exposure searches DuckDuckGo by
+   default with no key and nothing to install, so "enter name → Run scan →
+   results" works out of the box. The remaining gap is reliability: DuckDuckGo
+   rate-limits automated queries, so a scan can come back incomplete and need a
+   retry (or a Brave key / self-hosted SearXNG for guaranteed reliability),
+   whereas a paid service has contractually reliable search. Honest, but no
+   longer a "can't search at all" gap.
 
 3. **Reverse lookups** (phone→identity, email→identity, reverse image). We
    deliberately omit these — their main value is investigating *other* people,

@@ -122,12 +122,26 @@ def test_background_scan_completes(svc: Service) -> None:
     assert svc.get_scan(scan_id)["status"] == "COMPLETE"
 
 
-def test_scan_without_key_reports_provider_error(svc: Service) -> None:
-    """Search enabled with no provider must surface an error, not zero findings."""
-    subject = svc.create_subject(SubjectCreate(name="Jane Example"))
+def test_search_works_with_no_config_via_duckduckgo(
+    svc: Service, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With nothing configured, search still runs (DuckDuckGo default)."""
+    import exposure.scanner as scanner_mod
+
+    class _Stub:
+        id = "duckduckgo"
+
+        def search(self, query, limit):  # type: ignore[no-untyped-def]
+            from exposure.discovery.provider import SearchCandidate
+
+            return [SearchCandidate(url="https://broker.example/p", provider=self.id)]
+
+    monkeypatch.setattr(scanner_mod, "DuckDuckGoProvider", lambda: _Stub())
+    subject = svc.create_subject(SubjectCreate(name="Jane Example", emails=["jane@example.com"]))
     scan_id, stats = svc.start_scan(subject.id, ScanCreate(use_search=True))
-    assert "no_search_provider_configured" in stats.provider_errors
-    assert svc.get_scan(scan_id)["status"] == "INCOMPLETE"
+    assert not stats.provider_errors
+    assert svc.get_scan(scan_id)["status"] == "COMPLETE"
+    assert stats.retrieved >= 1
 
 
 # --------------------------------------------------------------------------- #
