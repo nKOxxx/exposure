@@ -337,14 +337,36 @@ el('btn-scan').onclick = guard(async () => {
   const r = await api('POST', `/api/v1/subjects/${activeSubject}/scans`, body);
   pollScan(r.scan_id);
 });
+function showTab(name) {
+  document.querySelectorAll('nav button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  ['me','findings','cleanup','settings'].forEach(t =>
+    el('tab-'+t).classList.toggle('hidden', t !== name));
+}
+
 async function pollScan(id) {
-  const st = document.getElementById('scanStatus');
-  for (let i=0;i<120;i++) {
+  const st = el('scanStatus');
+  for (let i=0;i<600;i++) {
     const s = await api('GET', `/api/v1/scans/${id}`);
-    st.textContent = `scan ${s.status.toLowerCase()} — ${s.stats.findings||0} findings, ${s.stats.retrieved||0} retrieved`;
-    if (s.status !== 'RUNNING') {
-      for (const err of (s.stats.provider_errors || [])) {
-        st.textContent += ' ⚠ ' + explainProviderError(err);
+    const found = s.stats.findings || 0;
+    if (s.status === 'RUNNING') {
+      st.textContent = `searching… ${s.stats.queries_run||0} searches, `
+        + `${s.stats.retrieved||0} pages read, ${found} findings`;
+    } else {
+      const errs = (s.stats.provider_errors || []).map(explainProviderError);
+      // Findings already stored from any previous scan still count — never let
+      // a provider failure read as "you have nothing".
+      const total = (await api('GET', `/api/v1/findings?subject_id=${activeSubject}`)).length;
+      if (total > 0) {
+        st.innerHTML = `<strong>${total} findings ready.</strong> Opening Findings…`
+          + (errs.length ? ` <span class="warn">(search was limited: ${esc(errs[0])})</span>` : '');
+        await loadFindings();
+        showTab('findings');
+      } else if (errs.length) {
+        st.innerHTML = `<span class="warn">Search didn't complete: ${esc(errs[0])}</span>`;
+      } else {
+        st.textContent = 'Scan complete — nothing found for this profile.';
       }
       return;
     }
@@ -353,25 +375,51 @@ async function pollScan(id) {
 }
 
 // -- findings
+function qualityHtml(q) {
+  if (!q || (!q.message && !q.coverage_note)) return '';
+  return `<div class="card" style="margin-top:.6rem;border-color:var(--mod)">
+      ${q.message ? `<strong>Confirm which of these are you</strong>
+        <p class="muted" style="margin:.3rem 0">${esc(q.message)}</p>` : ''}
+      ${q.coverage_note ? `<p class="muted" style="margin:.3rem 0">⚠ ${esc(q.coverage_note)}</p>` : ''}
+    </div>`;
+}
+
 async function loadFindings() {
   if (!activeSubject) return;
   const dash = await api('GET', `/api/v1/subjects/${activeSubject}/dashboard`);
-  document.getElementById('dashCard').innerHTML =
+  el('dashCard').innerHTML =
     `<strong>Your exposure</strong><div class="row" style="margin-top:.5rem">
       <span class="pill">High ${dash.counts.HIGH}</span>
       <span class="pill">Moderate ${dash.counts.MODERATE}</span>
       <span class="pill">Low ${dash.counts.LOW}</span>
-      <span class="pill">Needs review ${dash.counts.needs_review}</span></div>`;
+      <span class="pill">Needs review ${dash.counts.needs_review}</span></div>`
+    + qualityHtml(dash.quality);
   const items = await api('GET', `/api/v1/findings?subject_id=${activeSubject}`);
+  // Unconfirmed items first: confirming them is the user's actual next action.
+  items.sort((a, b) => (b.needs_review - a.needs_review));
   const tb = document.querySelector('#findingsTable tbody');
   tb.innerHTML = items.map(f=>`<tr>
     <td><span class="pri pri-${esc(f.priority)}">${esc(f.priority)}</span></td>
     <td>${esc(f.category)}<div class="muted">${esc(f.summary)}</div></td>
-    <td>${esc(f.identity_state)}<div class="muted">${Math.round(f.identity_confidence*100)}%</div></td>
-    <td>${esc(f.source_domain||'')}</td>
-    <td><button class="ghost" onclick="openFinding('${f.id}')">Review</button></td></tr>`).join('')
+    <td>${esc(f.source_domain||'')}
+        <div class="muted">${esc(f.identity_state)} · ${Math.round(f.identity_confidence*100)}%</div></td>
+    <td class="row" style="gap:.3rem">
+      ${f.needs_review
+        ? `<button class="ghost" onclick="quickDecide('${f.id}','me')">This is me</button>
+           <button class="ghost" onclick="quickDecide('${f.id}','not_me')">Not me</button>`
+        : `<span class="pill">${f.identity_state === 'REJECTED' ? 'not you' : 'confirmed'}</span>`}
+      <button class="ghost" onclick="openFinding('${f.id}')">Details</button>
+    </td></tr>`).join('')
     || '<tr><td class="muted">No findings yet. Run a scan from the Me tab.</td></tr>';
 }
+
+// One-click triage straight from the list — the main workflow when Exposure
+// abstains rather than guessing.
+window.quickDecide = guard(async (id, decision) => {
+  await api('POST', `/api/v1/findings/${id}/decision`, { decision });
+  toast(decision === 'me' ? 'Confirmed — see Cleanup' : 'Marked not you');
+  await loadFindings();
+});
 
 window.openFinding = async (id) => {
   const d = await api('GET', `/api/v1/findings/${id}`);

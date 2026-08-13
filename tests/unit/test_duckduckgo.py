@@ -64,7 +64,7 @@ def test_respects_limit(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_rate_limit_is_classified(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_ddgs(monkeypatch, raises=RuntimeError("RatelimitException: 429"))
     with pytest.raises(ProviderError, match="duckduckgo_rate_limited"):
-        DuckDuckGoProvider().search(SearchQuery(text="q"), 5)
+        DuckDuckGoProvider(retries=1).search(SearchQuery(text="q"), 5)
 
 
 def test_timeout_is_classified(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,25 +73,25 @@ def test_timeout_is_classified(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _install_fake_ddgs(monkeypatch, raises=TimeoutException("slow"))
     with pytest.raises(ProviderError, match="duckduckgo_timeout"):
-        DuckDuckGoProvider().search(SearchQuery(text="q"), 5)
+        DuckDuckGoProvider(retries=1).search(SearchQuery(text="q"), 5)
 
 
 def test_generic_failure_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_ddgs(monkeypatch, raises=ValueError("boom"))
     with pytest.raises(ProviderError, match="duckduckgo_failed:ValueError"):
-        DuckDuckGoProvider().search(SearchQuery(text="q"), 5)
+        DuckDuckGoProvider(retries=1).search(SearchQuery(text="q"), 5)
 
 
 def test_missing_library_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     # Simulate ddgs not being importable.
     monkeypatch.setitem(sys.modules, "ddgs", None)
     with pytest.raises(ProviderError, match="duckduckgo_library_missing"):
-        DuckDuckGoProvider().search(SearchQuery(text="q"), 5)
+        DuckDuckGoProvider(retries=1).search(SearchQuery(text="q"), 5)
 
 
 def test_content_field_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_ddgs(monkeypatch, rows=[{"url": "https://a/1", "content": "snip"}])
-    results = DuckDuckGoProvider().search(SearchQuery(text="q"), 5)
+    results = DuckDuckGoProvider(retries=1).search(SearchQuery(text="q"), 5)
     assert results[0].url == "https://a/1" and results[0].snippet == "snip"
 
 

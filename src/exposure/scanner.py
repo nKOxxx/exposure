@@ -8,6 +8,7 @@ identity anchor — precision over recall.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -161,18 +162,35 @@ class Scanner:
                 stats.provider_errors.append(str(exc))
 
         if search_provider is not None:
+            # Keyless providers rate-limit; pause between queries rather than
+            # firing a whole scan's worth back to back.
+            delay = float(getattr(search_provider, "polite_delay", 0.0))
+            consecutive_failures = 0
+            first = True
             for pq in plan.queries:
                 if pq.sensitive and not options.include_sensitive:
                     stats.sensitive_skipped += 1
                     continue
+                # Once a provider is clearly blocking us, further queries only
+                # deepen the rate limit. Stop and report honestly.
+                if consecutive_failures >= 2:
+                    stats.provider_errors.append("search_aborted_after_repeated_failures")
+                    break
+                if delay and not first:
+                    time.sleep(delay)
+                first = False
                 try:
                     results = search_provider.search(
                         pq.as_query(), self._settings.max_results_per_query
                     )
                     stats.queries_run += 1
+                    consecutive_failures = 0
                     pairs.extend((c, True) for c in results)
                 except ProviderError as exc:
-                    stats.provider_errors.append(str(exc))
+                    consecutive_failures += 1
+                    message = str(exc)
+                    if message not in stats.provider_errors:
+                        stats.provider_errors.append(message)
 
         manual = ManualURLProvider(options.manual_urls)
         pairs.extend((c, False) for c in manual.all_candidates())

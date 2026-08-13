@@ -504,6 +504,60 @@ class Service:
 
     # -- dashboard ---------------------------------------------------------- #
 
+    def scan_quality(self, subject_id: str) -> dict[str, Any]:
+        """Explain the coverage and confidence the user is actually looking at.
+
+        Two things routinely make a scan look broken when it is working:
+
+        * many result pages are login walls or JavaScript shells (LinkedIn,
+          Crunchbase, Bloomberg, ZoomInfo…), so a static fetch yields nothing —
+          measured here rather than left as a silent gap;
+        * a page that only carries a name, or a name and a city, is genuinely
+          not enough to prove identity, so it stays in review. That is the
+          product working, but only if we say so and make reviewing easy.
+
+        Deliberately makes no promise that adding a particular profile field
+        will confirm anything: whether it helps depends on the page text, and
+        empirically it often does not.
+        """
+        self.get_subject(subject_id)
+        findings = self.db.list_findings(subject_id)
+        source_ids = {f.source_id for f in findings}
+
+        unreadable = 0
+        for row in self.db.conn.execute(
+            "SELECT s.id, COUNT(o.id) AS obs FROM sources s "
+            "LEFT JOIN observations o ON o.source_id = s.id "
+            "WHERE s.status = 'RETRIEVED' GROUP BY s.id"
+        ):
+            if row["obs"] <= 1:
+                unreadable += 1
+        blocked = self.db.conn.execute(
+            "SELECT COUNT(*) FROM sources WHERE status != 'RETRIEVED'"
+        ).fetchone()[0]
+
+        needs_review = sum(1 for f in findings if not f.match_state.actionable)
+        return {
+            "total_findings": len(findings),
+            "needs_review": needs_review,
+            "sources_with_findings": len(source_ids),
+            "unreadable_pages": unreadable,
+            "unfetchable_pages": blocked,
+            "message": (
+                f"{needs_review} of {len(findings)} findings need your confirmation. "
+                "Exposure will not guess that a page is you from a name alone — "
+                "mark each one “This is me” or “Not me” and it moves into Cleanup."
+                if needs_review
+                else ""
+            ),
+            "coverage_note": (
+                f"{unreadable} page(s) returned a login wall or script-only content "
+                "(LinkedIn, Crunchbase and similar), so nothing could be read from them."
+                if unreadable
+                else ""
+            ),
+        }
+
     def dashboard(self, subject_id: str) -> dict[str, Any]:
         findings = self.db.list_findings(subject_id)
         counts = {"HIGH": 0, "MODERATE": 0, "LOW": 0, "needs_review": 0}
@@ -516,7 +570,11 @@ class Service:
                 counts["MODERATE"] += 1
             else:
                 counts["LOW"] += 1
-        return {"counts": counts, "total": len(findings)}
+        return {
+            "counts": counts,
+            "total": len(findings),
+            "quality": self.scan_quality(subject_id),
+        }
 
     # -- danger zone -------------------------------------------------------- #
 

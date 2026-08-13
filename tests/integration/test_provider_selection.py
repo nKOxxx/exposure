@@ -14,7 +14,7 @@ from exposure.discovery.providers import (
     DuckDuckGoProvider,
     SearXNGProvider,
 )
-from exposure.domain.models import Name, Subject
+from exposure.domain.models import LocationHint, Name, OrganisationHint, Subject
 from exposure.scanner import Scanner, ScanOptions
 from exposure.storage.database import Database
 from tests.conftest import make_mock_retriever_factory
@@ -87,6 +87,68 @@ def test_duckduckgo_rate_limit_reports_incomplete(
     scan_id, stats = _scanner(db, settings).run(_subject(db), ScanOptions(use_search=True))
     assert "duckduckgo_rate_limited" in stats.provider_errors
     assert db.get_scan(scan_id)["status"] == "INCOMPLETE"
+
+
+def test_scan_stops_hammering_a_blocking_provider(
+    db: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated failures abort the search instead of deepening the rate limit."""
+    import exposure.scanner as scanner_mod
+
+    calls = {"n": 0}
+
+    class _AlwaysBlocked:
+        id = "duckduckgo"
+        polite_delay = 0.0  # keep the test fast
+
+        def search(self, query, limit):  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            raise ProviderError("duckduckgo_rate_limited")
+
+    monkeypatch.setattr(scanner_mod, "DuckDuckGoProvider", lambda: _AlwaysBlocked())
+    # A realistic profile plans many queries — the situation where hammering a
+    # blocked provider actually matters.
+    rich = db.create_subject(
+        Subject(
+            names=[Name(value="Jane Example", is_primary=True)],
+            locations=[LocationHint(city="London", country="UK")],
+            employers=[OrganisationHint(name="Acme Corp")],
+        )
+    )
+    _, stats = _scanner(db, settings).run(rich, ScanOptions(use_search=True))
+
+    assert calls["n"] == 2, "should stop after two consecutive failures"
+    assert "duckduckgo_rate_limited" in stats.provider_errors
+    assert "search_aborted_after_repeated_failures" in stats.provider_errors
+    # Errors are de-duplicated rather than repeated once per query.
+    assert stats.provider_errors.count("duckduckgo_rate_limited") == 1
+
+
+def test_scanner_honours_polite_delay(
+    db: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A keyless provider gets a pause between queries."""
+    import exposure.scanner as scanner_mod
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(scanner_mod.time, "sleep", lambda s: sleeps.append(s))
+
+    class _Slow:
+        id = "duckduckgo"
+        polite_delay = 2.0
+
+        def search(self, query, limit):  # type: ignore[no-untyped-def]
+            from exposure.discovery.provider import SearchCandidate
+
+            return [SearchCandidate(url="https://a.example/p", provider=self.id)]
+
+    monkeypatch.setattr(scanner_mod, "DuckDuckGoProvider", lambda: _Slow())
+    _, stats = _scanner(db, settings).run(_subject(db), ScanOptions(use_search=True))
+
+    assert stats.queries_run >= 2
+    # One pause between each pair of queries — never before the first.
+    assert len(sleeps) == stats.queries_run - 1
+    assert all(s == 2.0 for s in sleeps)
 
 
 def test_duckduckgo_results_flow_into_a_scan(
