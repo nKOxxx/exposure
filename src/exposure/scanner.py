@@ -40,7 +40,9 @@ from exposure.domain.models import Finding, Observation, Source, Subject, new_id
 from exposure.extraction import extract_document
 from exposure.resolution import phone_match, resolve
 from exposure.retrieval import canonical_url, registrable_domain
+from exposure.retrieval.browser import render_if_available
 from exposure.retrieval.client import RetrievalError, SecureRetriever
+from exposure.retrieval.limits import HTML_TYPES
 from exposure.storage.database import Database
 
 
@@ -64,6 +66,22 @@ class ScanStats:
     findings: int = 0
     provider_errors: list[str] = field(default_factory=list)
 
+    rendered: int = 0
+    phase: str = "starting"
+
+    @property
+    def progress_pct(self) -> int:
+        """0-100 for a progress bar. Search is the first third, pages the rest."""
+        if self.phase == "done":
+            return 100
+        if self.phase == "searching":
+            planned = max(self.queries_planned - self.sensitive_skipped, 1)
+            return min(30, int(30 * self.queries_run / planned))
+        if self.phase == "reading" and self.candidates:
+            done = self.retrieved + self.blocked + self.failed
+            return 30 + min(69, int(69 * done / self.candidates))
+        return 30 if self.candidates else 5
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "queries_planned": self.queries_planned,
@@ -71,11 +89,14 @@ class ScanStats:
             "sensitive_skipped": self.sensitive_skipped,
             "candidates": self.candidates,
             "retrieved": self.retrieved,
+            "rendered": self.rendered,
             "blocked": self.blocked,
             "failed": self.failed,
             "bytes_downloaded": self.bytes_downloaded,
             "findings": self.findings,
             "provider_errors": self.provider_errors,
+            "phase": self.phase,
+            "progress_pct": self.progress_pct,
         }
 
 
@@ -109,17 +130,21 @@ def _own_identifiers_only(
     own_usernames = {u.lower() for u in subject.usernames}
     own_phones = [p.value for p in subject.phones]
 
-    kept: list[Observation] = []
-    for obs in observations:
-        if obs.type not in _IDENTITY_BEARING:
-            kept.append(obs)
-            continue
+    def belongs_to_subject(obs: Observation) -> bool:
         value = obs.value_normalized
-        if obs.type == ObservationType.EMAIL and value in own_emails or obs.type == ObservationType.USERNAME and value in own_usernames or obs.type == ObservationType.PHONE and phone_match(value, own_phones) or obs.type == ObservationType.SOCIAL_LINK and any(
-            u in value for u in own_usernames
-        ):
-            kept.append(obs)
-    return kept
+        match obs.type:
+            case ObservationType.EMAIL:
+                return value in own_emails
+            case ObservationType.USERNAME:
+                return value in own_usernames
+            case ObservationType.PHONE:
+                return phone_match(value, own_phones)
+            case ObservationType.SOCIAL_LINK:
+                return any(handle in value for handle in own_usernames)
+            case _:
+                return True
+
+    return [o for o in observations if o.type not in _IDENTITY_BEARING or belongs_to_subject(o)]
 
 
 class Scanner:
@@ -198,6 +223,8 @@ class Scanner:
         """Return ``(candidate, from_search)`` pairs, deduped and capped."""
         plan = plan_queries(subject, self._settings)
         stats.queries_planned = len(plan.queries)
+        stats.phase = "searching"
+        self._publish(scan_id, stats)
         pairs: list[tuple[SearchCandidate, bool]] = []
 
         search_provider = None
@@ -270,6 +297,7 @@ class Scanner:
     ) -> None:
         candidates = self._gather_candidates(scan_id, subject, options, stats)
         stats.candidates = len(candidates)
+        stats.phase = "reading"
         self._publish(scan_id, stats)
         retriever = self._make_retriever(self._settings)
         try:
@@ -281,6 +309,8 @@ class Scanner:
                 self._process_candidate(retriever, scan_id, subject, cand, from_search, stats)
                 # Publish after every page so the UI advances steadily.
                 self._publish(scan_id, stats)
+            stats.phase = "done"
+            self._publish(scan_id, stats)
         finally:
             retriever.close()
 
@@ -316,6 +346,22 @@ class Scanner:
 
         reg_domain = registrable_domain(doc.final_url)
         extraction = extract_document(doc.content_type, doc.body, subject)
+
+        # A page that yields almost no text is usually a JavaScript shell. If
+        # rendering is enabled, re-fetch it in a sandboxed browser: measured on
+        # real pages this took crunchbase 113 -> 724 chars and recovered
+        # zoominfo and cypherhunter from nothing at all.
+        if (
+            self._settings.render_javascript
+            and doc.content_type in HTML_TYPES
+            and len(" ".join(i.evidence_snippet for i in extraction.items)) < 400
+        ):
+            rendered = render_if_available(doc.final_url, self._settings.render_timeout_ms)
+            if rendered is not None and len(rendered.html) > len(doc.body):
+                richer = extract_document("text/html", rendered.html.encode(), subject)
+                if len(richer.items) > len(extraction.items):
+                    extraction = richer
+                    stats.rendered += 1
         source = Source(
             url=cand.url,
             canonical_url=canonical_url(doc.final_url),

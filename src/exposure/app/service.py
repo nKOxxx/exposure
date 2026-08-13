@@ -73,9 +73,22 @@ class Service:
     def create_subject(self, payload: SubjectCreate) -> Subject:
         names = [Name(value=payload.name.strip(), is_primary=True)]
         names += [Name(value=n.strip()) for n in payload.alt_names if n.strip()]
-        locations = []
-        if payload.city or payload.country:
-            locations.append(LocationHint(city=payload.city, country=payload.country))
+        # Merge the multi-location list with the legacy single city/country,
+        # de-duplicating so the same place is not searched twice.
+        locations: list[LocationHint] = []
+        seen_places: set[tuple[str, str]] = set()
+        raw_places = [(loc.city, loc.country) for loc in payload.locations]
+        raw_places.append((payload.city, payload.country))
+        for city, country in raw_places:
+            city = (city or "").strip() or None
+            country = (country or "").strip() or None
+            if not city and not country:
+                continue
+            key = ((city or "").lower(), (country or "").lower())
+            if key in seen_places:
+                continue
+            seen_places.add(key)
+            locations.append(LocationHint(city=city, country=country))
         subject = Subject(
             names=names,
             locations=locations,
@@ -352,6 +365,68 @@ class Service:
 
     def list_cases(self) -> list[dict[str, Any]]:
         return [self._case_public(c) for c in self.db.list_cases()]
+
+    #: Where each case state sits in the user's workflow, and what they do next.
+    _CASE_STAGE: dict[CaseState, tuple[str, str, str | None]] = {
+        CaseState.DISCOVERED: ("to_do", "Choose how to act", "ACTION_SELECTED"),
+        CaseState.ACTION_SELECTED: ("to_do", "Open the draft and send it", "REQUEST_PREPARED"),
+        CaseState.REQUEST_PREPARED: (
+            "to_do", "Send it, then mark it submitted", "USER_MARKED_SUBMITTED",
+        ),
+        CaseState.USER_MARKED_SUBMITTED: ("waiting", "Sent — waiting on them", "AWAITING_RESPONSE"),
+        CaseState.AWAITING_RESPONSE: ("waiting", "Waiting on them — check again", None),
+        CaseState.SOURCE_CHANGED: ("verify", "The page changed — verify it", None),
+        CaseState.VERIFICATION_PENDING: ("verify", "Ready to verify", None),
+        CaseState.VERIFIED: ("done", "Verified removed", None),
+        CaseState.REQUEST_DENIED: ("to_do", "They refused — try another route", "ACTION_SELECTED"),
+        CaseState.REAPPEARED: ("to_do", "It came back — act again", "ACTION_SELECTED"),
+        CaseState.SOURCE_UNREACHABLE: ("waiting", "Page unreachable — try later", None),
+        CaseState.NOT_APPLICABLE: ("done", "No action available", None),
+        CaseState.REJECTED: ("done", "Not you", None),
+        CaseState.USER_ABANDONED: ("done", "You stopped this one", None),
+        CaseState.REVIEWED: ("to_do", "Choose how to act", "ACTION_SELECTED"),
+    }
+
+    def cleanup_board(self) -> dict[str, Any]:
+        """The Cleanup view: what to do now, what you're waiting on, what's done.
+
+        A flat list of case rows does not tell someone what to actually do next.
+        This groups every case into a stage, names the next action in plain
+        words, and carries the page it belongs to so the board is readable
+        without opening anything.
+        """
+        lanes: dict[str, list[dict[str, Any]]] = {
+            "to_do": [], "waiting": [], "verify": [], "done": [],
+        }
+        for case in self.db.list_cases():
+            finding = self.db.get_finding(case.finding_id)
+            if finding is None:
+                continue
+            source = self.db.get_source(finding.source_id)
+            lane, next_label, next_state = self._CASE_STAGE.get(
+                case.state, ("to_do", "Review this", None)
+            )
+            entry = self._case_public(case) | {
+                "category": finding.category.value,
+                "priority": finding.overall_priority.value,
+                "domain": source.registrable_domain if source else "",
+                "url": source.url if source else "",
+                "title": (source.title if source else None) or (
+                    source.registrable_domain if source else ""
+                ),
+                "next_label": next_label,
+                "next_state": next_state,
+                "verification": case.verification.model_dump(mode="json")
+                if case.verification
+                else None,
+            }
+            lanes[lane].append(entry)
+
+        return {
+            "lanes": lanes,
+            "counts": {k: len(v) for k, v in lanes.items()},
+            "total": sum(len(v) for v in lanes.values()),
+        }
 
     def add_case_event(self, case_id: str, payload: CaseEvent) -> dict[str, Any]:
         case = self.db.get_case(case_id)

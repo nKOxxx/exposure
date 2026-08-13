@@ -36,6 +36,8 @@ dependencies = [
     "cryptography>=42.0",
     "pyyaml>=6.0",
     "ddgs>=9.0",              # keyless DuckDuckGo discovery (zero-setup default)
+    "selectolax>=0.3.21",     # fast HTML5 tree parsing (~2x the stdlib parser)
+    "protego>=0.3",           # robots.txt compliance (same parser Scrapy uses)
 ]
 
 [project.optional-dependencies]

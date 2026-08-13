@@ -122,6 +122,11 @@ def list_cases(request: Request) -> list[dict[str, Any]]:
     return _service(request).list_cases()
 
 
+@router.get("/cleanup")
+def cleanup_board(request: Request) -> dict[str, Any]:
+    return _service(request).cleanup_board()
+
+
 @router.get("/cases/{case_id}")
 def get_case(case_id: str, request: Request) -> dict[str, Any]:
     return _service(request).get_case(case_id)

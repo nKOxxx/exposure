@@ -14,6 +14,11 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 
+try:  # optional: a real HTML5 tree parser, ~2x faster than the stdlib one
+    from selectolax.parser import HTMLParser as HTMLParserFast
+except ImportError:  # pragma: no cover - fallback path is exercised by tests
+    HTMLParserFast = None  # type: ignore[assignment,misc]
+
 _SKIP_CONTENT_TAGS = {"script", "style", "noscript", "template", "svg"}
 _BLOCK_TAGS = {
     "p", "div", "br", "li", "ul", "ol", "tr", "table", "section", "article",
@@ -112,12 +117,82 @@ class _Collector(HTMLParser):
         return "\n".join(ln for ln in lines if ln)
 
 
+def _decode(body: bytes) -> str:
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body.decode("latin-1", errors="replace")
+
+
+def _parse_with_selectolax(text: str) -> ParsedHTML | None:
+    """Parse with selectolax (lexbor): ~2x faster and a real HTML5 tree.
+
+    Returns ``None`` if selectolax is unavailable or the document defeats it,
+    so the standard-library parser below stays as a guaranteed fallback.
+    """
+    if HTMLParserFast is None:
+        return None
+    try:
+        tree = HTMLParserFast(text)
+    except Exception:
+        return None
+
+    meta: dict[str, str] = {}
+    for node in tree.css("meta"):
+        key = node.attributes.get("property") or node.attributes.get("name")
+        content = node.attributes.get("content")
+        if key and content:
+            meta[key.lower()] = content
+
+    jsonld: list[dict[str, Any]] = []
+    for node in tree.css('script[type="application/ld+json"]'):
+        raw = (node.text() or "").strip()
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for item in data if isinstance(data, list) else [data]:
+            if not isinstance(item, dict):
+                continue
+            graph = item.get("@graph")
+            if isinstance(graph, list):
+                jsonld.extend(g for g in graph if isinstance(g, dict))
+            else:
+                jsonld.append(item)
+
+    links = [
+        href for node in tree.css("a") if (href := node.attributes.get("href"))
+    ]
+
+    title_node = tree.css_first("title")
+    title = (title_node.text() or "").strip() if title_node else None
+
+    # Drop non-visible content before taking text (spec section 9).
+    for node in tree.css("script, style, noscript, template, svg"):
+        node.decompose()
+    body_node = tree.body or tree.root
+    raw_text = body_node.text(separator="\n") if body_node else ""
+    lines = [ln.strip() for ln in raw_text.splitlines()]
+
+    return ParsedHTML(
+        title=title or None,
+        text="\n".join(ln for ln in lines if ln),
+        meta=meta,
+        jsonld=jsonld,
+        links=links,
+    )
+
+
 def parse_html(body: bytes) -> ParsedHTML:
     """Parse HTML bytes into structured, sanitized fields."""
-    try:
-        text = body.decode("utf-8")
-    except UnicodeDecodeError:
-        text = body.decode("latin-1", errors="replace")
+    text = _decode(body)
+
+    parsed = _parse_with_selectolax(text)
+    if parsed is not None:
+        return parsed
+
     collector = _Collector()
     # A malformed document must never crash the pipeline (spec section 28).
     with contextlib.suppress(Exception):

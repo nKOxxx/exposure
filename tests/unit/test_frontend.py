@@ -97,8 +97,8 @@ def test_all_referenced_element_ids_exist() -> None:
 def test_form_field_ids_are_all_wired() -> None:
     """Every subject form field is actually read by the create handler."""
     script = _script_body(_index_html())
-    for field in ("f-name", "f-alt", "f-city", "f-country", "f-emp", "f-user",
-                  "f-dom", "f-email"):
+    for field in ("f-name", "f-alt", "f-city", "f-country", "f-city2", "f-country2",
+                  "f-city3", "f-country3", "f-emp", "f-user", "f-dom", "f-email"):
         assert f"'{field}'" in script, f"form field {field} is never read by the UI"
 
 

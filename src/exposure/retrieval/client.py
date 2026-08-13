@@ -25,6 +25,7 @@ from exposure.retrieval.limits import (
     read_capped,
 )
 from exposure.retrieval.network_policy import GuardedTransport
+from exposure.retrieval.robots import RobotsPolicy
 from exposure.security.validation import UrlPolicyError, validate_url_syntax
 
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
@@ -79,6 +80,11 @@ class SecureRetriever:
             headers={"User-Agent": _USER_AGENT, "Accept-Encoding": "gzip, deflate"},
             max_redirects=0,
         )
+        # Exposure identifies itself honestly and obeys robots.txt rather than
+        # impersonating a browser (spec sections 3 and 8).
+        self._robots = (
+            RobotsPolicy(_USER_AGENT) if getattr(settings, "obey_robots_txt", True) else None
+        )
 
     def __enter__(self) -> SecureRetriever:
         return self
@@ -95,6 +101,11 @@ class SecureRetriever:
             current = validate_url_syntax(url)
         except UrlPolicyError as exc:
             raise RetrievalError(SourceStatus.RETRIEVAL_BLOCKED, str(exc)) from exc
+
+        # Ask the site's own rules first. Blocked pages are still recorded with
+        # their link so the user can open them personally.
+        if self._robots is not None and not self._robots.allows(current):
+            raise RetrievalError(SourceStatus.RETRIEVAL_BLOCKED, "robots_txt_disallows")
 
         for _ in range(self._settings.max_redirects + 1):
             try:

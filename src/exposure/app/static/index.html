@@ -61,6 +61,9 @@
               text-transform:uppercase; letter-spacing:.02em; }
   .found .v { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
   .pill.ok { border-color:#2e7d32; color:#66bb6a; }
+  .bar { height:.55rem; background:var(--line); border-radius:1rem; overflow:hidden; }
+  .bar-fill { height:100%; width:0%; background:var(--accent); border-radius:1rem;
+              transition:width .4s ease; }
   .routes { margin-top:.7rem; border-top:1px solid var(--line); padding-top:.6rem; }
   .route { display:flex; justify-content:space-between; align-items:center; gap:1rem;
            padding:.45rem 0; border-bottom:1px solid var(--line); }
@@ -88,9 +91,21 @@
       </div>
       <label>Full name *</label><input id="f-name" placeholder="Jane Example">
       <label>Alternate names (comma-separated)</label><input id="f-alt">
+      <label>Places you've lived or worked</label>
+      <p class="muted" style="margin:.1rem 0 .3rem">Add up to three. Each one is
+      searched, and a page naming any of them counts in your favour — not as a
+      contradiction.</p>
       <div class="row">
-        <div style="flex:1"><label>City</label><input id="f-city"></div>
-        <div style="flex:1"><label>Country</label><input id="f-country"></div>
+        <div style="flex:1"><input id="f-city" placeholder="City"></div>
+        <div style="flex:1"><input id="f-country" placeholder="Country"></div>
+      </div>
+      <div class="row" style="margin-top:.3rem">
+        <div style="flex:1"><input id="f-city2" placeholder="City (optional)"></div>
+        <div style="flex:1"><input id="f-country2" placeholder="Country (optional)"></div>
+      </div>
+      <div class="row" style="margin-top:.3rem">
+        <div style="flex:1"><input id="f-city3" placeholder="City (optional)"></div>
+        <div style="flex:1"><input id="f-country3" placeholder="Country (optional)"></div>
       </div>
       <label>Employers (comma-separated)</label><input id="f-emp">
       <label>Usernames (comma-separated)</label><input id="f-user">
@@ -139,6 +154,10 @@
         <button class="primary" id="btn-scan">Run scan</button>
         <span class="muted" id="scanStatus"></span>
       </div>
+      <div id="progressWrap" class="hidden" style="margin-top:.7rem">
+        <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+        <div class="muted" id="barLabel" style="margin-top:.3rem"></div>
+      </div>
     </div>
   </section>
 
@@ -151,7 +170,7 @@
 
   <!-- CLEANUP -->
   <section id="tab-cleanup" class="hidden">
-    <div class="card"><table id="casesTable"><tbody></tbody></table></div>
+    <div id="cleanupBoard"></div>
   </section>
 
   <!-- SETTINGS -->
@@ -246,8 +265,11 @@ el('btn-create').onclick = guard(async () => {
   const name = val('f-name').trim();
   if (!name) { toast('Name is required'); return; }
   // Deliberately no phone field: Exposure does not ask for it (see the UI note).
-  const payload = { name, alt_names: csv(val('f-alt')), city: val('f-city').trim()||null,
-    country: val('f-country').trim()||null, employers: csv(val('f-emp')),
+  const locations = [['f-city','f-country'], ['f-city2','f-country2'], ['f-city3','f-country3']]
+    .map(([c, k]) => ({ city: val(c).trim() || null, country: val(k).trim() || null }))
+    .filter(l => l.city || l.country);
+  const payload = { name, alt_names: csv(val('f-alt')), locations,
+    employers: csv(val('f-emp')),
     usernames: csv(val('f-user')), personal_domains: csv(val('f-dom')),
     emails: csv(val('f-email')) };
   const s = await api('POST','/api/v1/subjects', payload);
@@ -368,15 +390,33 @@ function showTab(name) {
     el('tab-'+t).classList.toggle('hidden', t !== name));
 }
 
+const PHASE_LABEL = {
+  starting: 'Getting ready',
+  searching: 'Searching the web for you',
+  reading: 'Reading the pages we found',
+  done: 'Finishing up',
+};
+
 async function pollScan(id) {
   const st = el('scanStatus');
+  el('progressWrap').classList.remove('hidden');
   for (let i=0;i<600;i++) {
     const s = await api('GET', `/api/v1/scans/${id}`);
     const found = s.stats.findings || 0;
     if (s.status === 'RUNNING') {
-      st.textContent = `searching… ${s.stats.queries_run||0} searches, `
-        + `${s.stats.retrieved||0} pages read, ${found} findings`;
+      const pct = s.stats.progress_pct || 0;
+      el('barFill').style.width = pct + '%';
+      const phase = PHASE_LABEL[s.stats.phase] || 'Working';
+      const detail = s.stats.phase === 'reading'
+        ? `${(s.stats.retrieved||0)} of ${(s.stats.candidates||0)} pages · ${found} findings`
+        : `${s.stats.queries_run||0} searches run`;
+      el('barLabel').textContent = `${pct}% · ${phase} — ${detail}`;
+      st.textContent = '';
     } else {
+      el('barFill').style.width = '100%';
+      el('barLabel').textContent =
+        `100% · done — read ${s.stats.retrieved||0} pages`
+        + (s.stats.rendered ? `, rendered ${s.stats.rendered}` : '');
       const errs = (s.stats.provider_errors || []).map(explainProviderError);
       // Findings already stored from any previous scan still count — never let
       // a provider failure read as "you have nothing".
@@ -562,23 +602,89 @@ window.makeCase = async (finding_id, registry_id, route) => {
   dlg.showModal(); toast('Case created — see Cleanup');
 };
 
-// -- cases
+// -- cleanup board: do now / waiting / verify / done
+const LANES = [
+  ['to_do',   'Do now',            'Nothing waiting on you.'],
+  ['waiting', 'Waiting on them',   'Nothing sent yet.'],
+  ['verify',  'Ready to verify',   'Nothing to check yet.'],
+  ['done',    'Done',              'Nothing finished yet.'],
+];
+
 async function loadCases() {
-  const cases = await api('GET','/api/v1/cases');
-  const tb = document.querySelector('#casesTable tbody');
-  tb.innerHTML = cases.map(c=>`<tr>
-    <td>${esc(c.route)}<div class="muted">${esc(c.id.slice(0,8))}</div></td>
-    <td>${esc(c.state)}</td>
-    <td class="row">
-      ${c.state==='REQUEST_PREPARED'||c.state==='ACTION_SELECTED'?`<button class="ghost" onclick="advance('${c.id}','USER_MARKED_SUBMITTED')">Mark submitted</button>`:''}
-      ${['USER_MARKED_SUBMITTED','AWAITING_RESPONSE','VERIFICATION_PENDING'].includes(c.state)?`<button class="ghost" onclick="verifyCase('${c.id}')">Verify</button>`:''}
-    </td></tr>`).join('') || '<tr><td class="muted">No cases yet.</td></tr>';
+  const board = await api('GET','/api/v1/cleanup');
+  if (!board.total) {
+    el('cleanupBoard').innerHTML =
+      `<div class="card"><strong>Nothing to clean up yet</strong>
+       <p class="muted">Confirm a finding on the Findings tab and pick how you
+       want to act on it — it will show up here with the next step.</p>
+       <button class="ghost" onclick="showTab('findings')">Go to Findings</button></div>`;
+    return;
+  }
+  el('cleanupBoard').innerHTML = LANES.map(([key, title, empty]) => {
+    const items = board.lanes[key] || [];
+    return `<div class="card">
+      <div class="row" style="justify-content:space-between">
+        <strong>${esc(title)}</strong><span class="pill">${items.length}</span>
+      </div>
+      ${items.length
+        ? items.map(c => caseRow(c, key)).join('')
+        : `<p class="muted" style="margin:.4rem 0 0">${esc(empty)}</p>`}
+    </div>`;
+  }).join('');
 }
-window.advance = async (id, to) => { try { await api('POST', `/api/v1/cases/${id}/events`, {target_state:to});
-  toast('Updated'); loadCases(); } catch(e){ toast('Error: '+e.message); } };
-window.verifyCase = async (id) => { toast('Verifying…');
-  try { const r = await api('POST', `/api/v1/cases/${id}/verify`); toast('Verified: '+(r.verification?.source_status||'unknown')); loadCases(); }
-  catch(e){ toast('Error: '+e.message); } };
+
+function caseRow(c, lane) {
+  const verified = c.verification && c.verification.source_status;
+  return `<div class="route" style="align-items:flex-start">
+    <div>
+      <a href="${esc(c.url)}" target="_blank" rel="noreferrer noopener"
+         class="ptitle">${esc(c.title)}</a>
+      <div class="muted">${esc(routeLabel(c.route))} · ${esc(c.category)}
+        ${verified ? ` · <strong>${esc(verified)}</strong>` : ''}</div>
+      <div class="muted"><strong>${esc(c.next_label)}</strong></div>
+    </div>
+    <div class="row" style="gap:.3rem">
+      ${c.next_state
+        ? `<button class="primary" onclick="advance('${c.id}','${c.next_state}')">
+             ${c.next_state === 'USER_MARKED_SUBMITTED' ? 'I sent it' : 'Continue'}</button>`
+        : ''}
+      ${lane === 'waiting' || lane === 'verify'
+        ? `<button class="ghost" onclick="verifyCase('${c.id}')">Check now</button>` : ''}
+      <button class="ghost" onclick="reopenDraft('${c.finding_id}')">Draft</button>
+    </div>
+  </div>`;
+}
+
+window.advance = guard(async (id, to) => {
+  await api('POST', `/api/v1/cases/${id}/events`, { target_state: to });
+  toast('Updated');
+  await loadCases();
+});
+
+window.verifyCase = guard(async (id) => {
+  toast('Checking the page…');
+  const r = await api('POST', `/api/v1/cases/${id}/verify`);
+  const status = (r.verification && r.verification.source_status) || 'unknown';
+  toast(VERIFY_TEXT[status] || status);
+  await loadCases();
+});
+
+// Verification wording stays observational — never "removed" on our say-so.
+const VERIFY_TEXT = {
+  URL_GONE: 'The page is gone',
+  CONTENT_REMOVED: 'The content is gone',
+  PERSONAL_DATA_REMOVED: 'Your details are no longer on the page',
+  CONTENT_CHANGED: 'The page changed, but your details are still there',
+  UNCHANGED: 'No change yet',
+  ACCESS_BLOCKED: 'Could not read the page to check',
+  UNKNOWN: 'Could not determine — try again later',
+};
+
+window.reopenDraft = guard(async (findingId) => {
+  await showRoutes(findingId);
+  showTab('findings');
+  toast('Draft options opened under the finding');
+});
 
 // -- settings
 const PROVIDER_BLURB = {

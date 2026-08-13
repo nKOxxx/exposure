@@ -7,11 +7,22 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class LocationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    city: str | None = None
+    country: str | None = None
+
+
 class SubjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1)
     alt_names: list[str] = Field(default_factory=list)
+    # People move. Several places can be given, and each one is searched and
+    # counts as corroboration; a page naming any of them is not a conflict.
+    locations: list[LocationInput] = Field(default_factory=list, max_length=5)
+    # Retained so existing callers keep working; merged with ``locations``.
     city: str | None = None
     country: str | None = None
     employers: list[str] = Field(default_factory=list)

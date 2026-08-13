@@ -54,6 +54,21 @@ class Settings:
     # AI is off by default (spec section 25).
     ai_mode: str = "NO_AI"  # NO_AI | LOCAL_AI | REMOTE_AI
 
+    # JavaScript rendering (spec section 8): off by default. When enabled, a
+    # page whose static fetch yields almost no text is retried in a sandboxed
+    # headless browser. This renders public pages; it is not bot-detection
+    # evasion, which stays out of scope.
+    # Ask each site's robots.txt before fetching. Exposure obeys rather than
+    # evades; a disallowed page is recorded with its link so the person can open
+    # it themselves, which robots.txt has never governed.
+    obey_robots_txt: bool = True
+
+    render_javascript: bool = False
+    render_timeout_ms: int = 20000
+    #: Below this many characters of extracted text, a page is treated as a
+    #: JavaScript shell and is worth re-fetching with rendering.
+    render_if_text_below: int = 200
+
     @property
     def db_path(self) -> Path:
         return self.workspace / "exposure.sqlite3"
