@@ -89,6 +89,11 @@ def list_findings(request: Request, subject_id: str | None = None) -> list[dict[
     return _service(request).list_findings(subject_id)
 
 
+@router.get("/subjects/{subject_id}/findings-by-page")
+def findings_by_page(subject_id: str, request: Request) -> list[dict[str, Any]]:
+    return _service(request).grouped_findings(subject_id)
+
+
 @router.get("/findings/{finding_id}")
 def get_finding(finding_id: str, request: Request) -> dict[str, Any]:
     return _service(request).finding_detail(finding_id)

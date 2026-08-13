@@ -83,6 +83,10 @@ class Database:
         conn.execute("PRAGMA synchronous=NORMAL")
         self._conn = conn
         self.migrate()
+        # NOTE: orphan cleanup is deliberately NOT done here. Scan workers open
+        # their own connection while a scan is in flight, so doing it on every
+        # connect() would mark the live scan as interrupted. The application
+        # calls mark_orphaned_scans() once at startup instead.
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -205,6 +209,30 @@ class Database:
                 "INSERT INTO scans(id, subject_id, started_at, status) VALUES (?, ?, ?, 'RUNNING')",
                 (scan_id, subject_id, started_at.isoformat()),
             )
+
+    def update_scan_stats(self, scan_id: str, stats: dict[str, Any]) -> None:
+        """Persist in-progress counters so the UI can show live progress.
+
+        Without this, stats only appear when a scan finishes and a running scan
+        reports zeros the whole time — which reads as a frozen app.
+        """
+        with self._tx():
+            self.conn.execute(
+                "UPDATE scans SET stats = ? WHERE id = ?", (json.dumps(stats), scan_id)
+            )
+
+    def mark_orphaned_scans(self) -> int:
+        """Fail scans left RUNNING by a process that exited (e.g. a restart).
+
+        Their worker thread is gone, so they would otherwise poll forever.
+        """
+        with self._tx():
+            cur = self.conn.execute(
+                "UPDATE scans SET status='INTERRUPTED', finished_at=?,"
+                " error='server restarted during scan' WHERE status='RUNNING'",
+                (datetime.now().astimezone().isoformat(),),
+            )
+        return int(cur.rowcount or 0)
 
     def finish_scan(
         self,
@@ -374,6 +402,20 @@ class Database:
         )
 
     # -- findings ----------------------------------------------------------- #
+
+    def supersede_findings_for_url(self, subject_id: str, canonical_url: str) -> int:
+        """Drop earlier findings for the same page before re-recording it.
+
+        Each scan creates a fresh source row, so without this a re-scan stacks a
+        second copy of every finding and the totals climb with each run.
+        """
+        with self._tx():
+            cur = self.conn.execute(
+                "DELETE FROM findings WHERE subject_id = ? AND source_id IN "
+                "(SELECT id FROM sources WHERE canonical_url = ?)",
+                (subject_id, canonical_url),
+            )
+        return int(cur.rowcount or 0)
 
     def add_finding(self, finding: Finding) -> None:
         with self._tx():

@@ -47,6 +47,24 @@
   #toast.show { opacity:.95; }
   dialog { border:1px solid var(--line); border-radius:.6rem; background:var(--bg); color:var(--fg);
            max-width:42rem; width:92%; }
+  /* Findings: one card per page */
+  .pcard { background:var(--card); border:1px solid var(--line); border-radius:.6rem;
+           padding:.9rem 1rem; margin-bottom:.7rem; }
+  .phead { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;
+           flex-wrap:wrap; }
+  .ptitle { font-weight:600; color:var(--fg); text-decoration:none; font-size:1rem; }
+  .ptitle:hover { text-decoration:underline; }
+  .psub { font-size:.8rem; margin-top:.1rem; }
+  .foundwrap { margin-top:.6rem; display:flex; flex-direction:column; gap:.25rem; }
+  .found { display:flex; gap:.6rem; align-items:baseline; font-size:.9rem; }
+  .found .k { color:var(--muted); min-width:9.5rem; font-size:.8rem;
+              text-transform:uppercase; letter-spacing:.02em; }
+  .found .v { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-all; }
+  .pill.ok { border-color:#2e7d32; color:#66bb6a; }
+  .routes { margin-top:.7rem; border-top:1px solid var(--line); padding-top:.6rem; }
+  .route { display:flex; justify-content:space-between; align-items:center; gap:1rem;
+           padding:.45rem 0; border-bottom:1px solid var(--line); }
+  .route:last-child { border-bottom:none; }
 </style>
 </head>
 <body>
@@ -127,7 +145,8 @@
   <!-- FINDINGS -->
   <section id="tab-findings" class="hidden">
     <div class="card" id="dashCard"></div>
-    <div class="card"><table id="findingsTable"><tbody></tbody></table></div>
+    <div id="pagesList"></div>
+    <div id="routes-fallback"></div>
   </section>
 
   <!-- CLEANUP -->
@@ -286,6 +305,10 @@ const PROVIDER_ERRORS = {
     'that SearXNG instance blocked the request (rate limit, or JSON API disabled) — try your own instance',
   searxng_json_api_disabled:
     'that SearXNG instance has the JSON API disabled — most public ones do; self-host to use search',
+  search_aborted_after_repeated_failures:
+    'search stopped early after repeated refusals — retry in a minute, or add manual URLs',
+  search_time_budget_exhausted:
+    'search hit its time limit (the provider was slow or rate-limiting) — pages found so far were still scanned',
 };
 function explainProviderError(code) {
   if (PROVIDER_ERRORS[code]) return PROVIDER_ERRORS[code];
@@ -394,32 +417,98 @@ async function loadFindings() {
       <span class="pill">Low ${dash.counts.LOW}</span>
       <span class="pill">Needs review ${dash.counts.needs_review}</span></div>`
     + qualityHtml(dash.quality);
-  const items = await api('GET', `/api/v1/findings?subject_id=${activeSubject}`);
-  // Unconfirmed items first: confirming them is the user's actual next action.
-  items.sort((a, b) => (b.needs_review - a.needs_review));
-  const tb = document.querySelector('#findingsTable tbody');
-  tb.innerHTML = items.map(f=>`<tr>
-    <td><span class="pri pri-${esc(f.priority)}">${esc(f.priority)}</span></td>
-    <td>${esc(f.category)}<div class="muted">${esc(f.summary)}</div></td>
-    <td>${esc(f.source_domain||'')}
-        <div class="muted">${esc(f.identity_state)} · ${Math.round(f.identity_confidence*100)}%</div></td>
-    <td class="row" style="gap:.3rem">
-      ${f.needs_review
-        ? `<button class="ghost" onclick="quickDecide('${f.id}','me')">This is me</button>
-           <button class="ghost" onclick="quickDecide('${f.id}','not_me')">Not me</button>`
-        : `<span class="pill">${f.identity_state === 'REJECTED' ? 'not you' : 'confirmed'}</span>`}
-      <button class="ghost" onclick="openFinding('${f.id}')">Details</button>
-    </td></tr>`).join('')
-    || '<tr><td class="muted">No findings yet. Run a scan from the Me tab.</td></tr>';
+  const pages = await api('GET', `/api/v1/subjects/${activeSubject}/findings-by-page`);
+  el('pagesList').innerHTML = pages.map(renderPageCard).join('')
+    || '<p class="muted">No findings yet. Run a scan from the Me tab.</p>';
 }
 
-// One-click triage straight from the list — the main workflow when Exposure
-// abstains rather than guessing.
-window.quickDecide = guard(async (id, decision) => {
-  await api('POST', `/api/v1/findings/${id}/decision`, { decision });
-  toast(decision === 'me' ? 'Confirmed — see Cleanup' : 'Marked not you');
+// One card per page: where it is, what was found there, how sure we are, and
+// what to do next.
+function renderPageCard(p) {
+  const pct = Math.round(p.identity_confidence * 100);
+  const found = p.items.map(i =>
+    `<div class="found"><span class="k">${esc(i.label)}</span>
+       <span class="v${i.sensitive ? ' warn' : ''}">${esc(i.value)}</span></div>`).join('');
+  const status = p.needs_review
+    ? `<span class="pill">unconfirmed · ${pct}%</span>`
+    : (p.identity_state === 'REJECTED'
+        ? `<span class="pill">marked not you</span>`
+        : `<span class="pill ok">confirmed</span>`);
+  const actions = p.needs_review
+    ? `<button class="primary" onclick="decidePage('${p.source_id}','me')">Yes, this is me</button>
+       <button class="ghost" onclick="decidePage('${p.source_id}','not_me')">Not me</button>`
+    : (p.identity_state === 'REJECTED'
+        ? `<button class="ghost" onclick="decidePage('${p.source_id}','me')">Undo</button>`
+        : `<button class="primary" onclick="showRoutes('${p.finding_ids[0]}')">What can I do about it?</button>
+           <button class="ghost" onclick="decidePage('${p.source_id}','not_me')">Not me</button>`);
+
+  return `<div class="pcard">
+    <div class="phead">
+      <div>
+        <a href="${esc(p.url)}" target="_blank" rel="noreferrer noopener"
+           class="ptitle">${esc(p.title || p.domain)}</a>
+        <div class="muted psub">${esc(p.domain)} ↗</div>
+      </div>
+      <div class="row" style="gap:.4rem">
+        <span class="pri pri-${esc(p.priority)}">${esc(p.priority)}</span>${status}
+      </div>
+    </div>
+    <div class="foundwrap">${found}</div>
+    <div class="row" style="gap:.4rem;margin-top:.6rem">
+      ${actions}
+      <button class="ghost" onclick="openFinding('${p.finding_ids[0]}')">Evidence</button>
+    </div>
+    <div id="routes-${esc(p.source_id)}"></div>
+  </div>`;
+}
+
+// Confirming applies to every finding on that page at once.
+window.decidePage = guard(async (sourceId, decision) => {
+  const pages = await api('GET', `/api/v1/subjects/${activeSubject}/findings-by-page`);
+  const page = pages.find(p => p.source_id === sourceId);
+  if (!page) return;
+  for (const fid of page.finding_ids) {
+    await api('POST', `/api/v1/findings/${fid}/decision`, { decision });
+  }
   await loadFindings();
+  if (decision === 'me') {
+    toast('Confirmed — showing your options');
+    await showRoutes(page.finding_ids[0]);
+  } else {
+    toast('Marked as not you');
+  }
 });
+
+// Make "what happens next" visible instead of leaving the user guessing.
+window.showRoutes = guard(async (findingId) => {
+  const detail = await api('GET', `/api/v1/findings/${findingId}`);
+  const routes = await api('GET', `/api/v1/findings/${findingId}/remediation-routes`);
+  const box = document.getElementById('routes-' + detail.source_id) ||
+              document.getElementById('routes-fallback');
+  if (!box) return;
+  box.innerHTML = `<div class="routes">
+    <strong>What you can do</strong>
+    ${routes.map(r => `<div class="route">
+        <div><strong>${esc(routeLabel(r.route))}</strong>
+          ${r.recommended ? '<span class="pill ok">recommended</span>' : ''}
+          <div class="muted">${esc(r.reason)}</div></div>
+        <button class="ghost" onclick="makeCase('${findingId}','${r.registry_id||''}','${r.route}')">
+          Prepare request</button>
+      </div>`).join('')}
+  </div>`;
+});
+
+function routeLabel(route) {
+  return ({
+    SEARCH_DELIST: 'Remove from Google search results',
+    SOURCE_DELETE: 'Ask the site to delete it',
+    SOURCE_CORRECT: 'Ask the site to correct it',
+    SOURCE_OPT_OUT: 'Opt out via the data-broker platform',
+    USER_CONTROLLED_REMOVE: 'You control this — edit or delete it yourself',
+    CONTACT_PUBLISHER: 'Contact the site owner',
+    NO_ACTION_AVAILABLE: 'No removal route available',
+  })[route] || route;
+}
 
 window.openFinding = async (id) => {
   const d = await api('GET', `/api/v1/findings/${id}`);

@@ -30,7 +30,11 @@ class DuckDuckGoProvider:
     #: honours this pause; keyed APIs leave it at 0.
     polite_delay = 2.0
 
-    def __init__(self, timeout: int = 15, retries: int = 3) -> None:
+    def __init__(self, timeout: int = 10, retries: int = 1) -> None:
+        # ddgs already retries across its own backends internally, and when
+        # DuckDuckGo is rate limiting that internal retrying can take minutes
+        # per query. Retrying again on top multiplied a 22-minute scan. One
+        # attempt here; the scanner enforces an overall search deadline.
         self._timeout = timeout
         self._retries = retries
 

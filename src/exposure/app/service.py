@@ -244,6 +244,7 @@ class Service:
         # The five questions a finding must answer (spec section 34).
         return {
             "id": f.id,
+            "source_id": f.source_id,
             "what": f.summary,
             "why_it_is_you": identity_reason(f.match_state, supporting),
             "why_it_matters": why_it_matters(f.category),
@@ -503,6 +504,60 @@ class Service:
         return build_report(self.db, subject_id)
 
     # -- dashboard ---------------------------------------------------------- #
+
+    def grouped_findings(self, subject_id: str) -> list[dict[str, Any]]:
+        """Findings grouped by the page they were found on.
+
+        One page normally yields several findings (a username, a linked profile,
+        an email). Listing those as separate rows repeats the same page over and
+        over and never shows *what* was actually found. Grouping by source, and
+        carrying the concrete values through, is what makes the list readable
+        and actionable. Sensitive values are the masked display forms.
+        """
+        self.get_subject(subject_id)
+        by_source: dict[str, dict[str, Any]] = {}
+
+        for finding in self.db.list_findings(subject_id):
+            source = self.db.get_source(finding.source_id)
+            if source is None:
+                continue
+            group = by_source.setdefault(
+                finding.source_id,
+                {
+                    "source_id": finding.source_id,
+                    "url": source.url,
+                    "domain": source.registrable_domain,
+                    "title": source.title,
+                    "identity_state": finding.match_state.value,
+                    "identity_confidence": finding.identity_confidence,
+                    "needs_review": not finding.match_state.actionable,
+                    "priority": finding.overall_priority.value,
+                    "finding_ids": [],
+                    "items": [],
+                },
+            )
+            group["finding_ids"].append(finding.id)
+            if Severity(finding.overall_priority) > Severity(group["priority"]):
+                group["priority"] = finding.overall_priority.value
+
+            wanted = set(finding.observation_ids)
+            for obs in self.db.observations_for_source(finding.source_id):
+                if obs.id not in wanted:
+                    continue
+                entry = {
+                    "category": finding.category.value,
+                    "label": finding.category.value.replace("_", " ").title(),
+                    "value": obs.display_value,
+                    "sensitive": obs.is_sensitive,
+                }
+                if entry not in group["items"]:
+                    group["items"].append(entry)
+
+        groups = list(by_source.values())
+        # Unreviewed first, then by priority: that is the order of work.
+        rank = {"CRITICAL": 0, "HIGH": 1, "MODERATE": 2, "LOW": 3, "NONE": 4}
+        groups.sort(key=lambda g: (not g["needs_review"], rank.get(g["priority"], 5)))
+        return groups
 
     def scan_quality(self, subject_id: str) -> dict[str, Any]:
         """Explain the coverage and confidence the user is actually looking at.

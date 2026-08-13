@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
 
     db = Database(settings)
     db.connect()
+    # Scans whose worker died with a previous process would otherwise stay
+    # RUNNING forever and the UI would poll them indefinitely.
+    orphans = db.mark_orphaned_scans()
+    if orphans:
+        print(f"  recovered {orphans} interrupted scan(s) from a previous run")
     service = Service(settings, db)
     guard = SessionGuard(host, port)
     app = create_app(settings, service, guard)

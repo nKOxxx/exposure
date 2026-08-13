@@ -45,6 +45,10 @@ class Settings:
     # Discovery budget (spec section 7).
     max_queries: int = 15
     max_results_per_query: int = 10
+    # Wall-clock budget for the whole search phase. A rate-limited keyless
+    # provider can spend minutes per query retrying internally; without a
+    # deadline a scan ran for 22 minutes. Retrieval is unaffected.
+    max_search_seconds: float = 90.0
     max_candidate_urls: int = 100
 
     # AI is off by default (spec section 25).

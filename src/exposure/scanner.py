@@ -8,6 +8,7 @@ identity anchor — precision over recall.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -34,10 +35,10 @@ from exposure.discovery.providers import (
     ManualURLProvider,
     SearXNGProvider,
 )
-from exposure.domain.enums import MatchState, SignalKind, SourceStatus
+from exposure.domain.enums import MatchState, ObservationType, SignalKind, SourceStatus
 from exposure.domain.models import Finding, Observation, Source, Subject, new_id, utcnow
 from exposure.extraction import extract_document
-from exposure.resolution import resolve
+from exposure.resolution import phone_match, resolve
 from exposure.retrieval import canonical_url, registrable_domain
 from exposure.retrieval.client import RetrievalError, SecureRetriever
 from exposure.storage.database import Database
@@ -82,6 +83,43 @@ def _has_identity_anchor(match) -> bool:  # type: ignore[no-untyped-def]
     return any(
         s.kind in (SignalKind.IDENTITY, SignalKind.DIRECT) for s in match.supporting_signals
     )
+
+
+#: Observation types that name a *specific person*. A page about the subject
+#: routinely also lists other people's handles and addresses; reporting those as
+#: "a username you use" is both wrong and a collection of third parties' data.
+_IDENTITY_BEARING = {
+    ObservationType.EMAIL,
+    ObservationType.PHONE,
+    ObservationType.USERNAME,
+    ObservationType.SOCIAL_LINK,
+}
+
+
+def _own_identifiers_only(
+    observations: list[Observation], subject: Subject
+) -> list[Observation]:
+    """Drop identity-bearing observations that belong to somebody else.
+
+    Only values matching one of the subject's own known identifiers survive.
+    Everything else (addresses, dates, employers found on a matched page) is
+    kept, because those are page facts rather than claims about a named person.
+    """
+    own_emails = {e.value.lower() for e in subject.emails}
+    own_usernames = {u.lower() for u in subject.usernames}
+    own_phones = [p.value for p in subject.phones]
+
+    kept: list[Observation] = []
+    for obs in observations:
+        if obs.type not in _IDENTITY_BEARING:
+            kept.append(obs)
+            continue
+        value = obs.value_normalized
+        if obs.type == ObservationType.EMAIL and value in own_emails or obs.type == ObservationType.USERNAME and value in own_usernames or obs.type == ObservationType.PHONE and phone_match(value, own_phones) or obs.type == ObservationType.SOCIAL_LINK and any(
+            u in value for u in own_usernames
+        ):
+            kept.append(obs)
+    return kept
 
 
 class Scanner:
@@ -146,8 +184,16 @@ class Scanner:
 
         return DuckDuckGoProvider()
 
+    def _publish(self, scan_id: str | None, stats: ScanStats) -> None:
+        """Write current counters so a polling UI sees live progress."""
+        if scan_id is None:
+            return
+        # Progress reporting must never be able to fail a scan.
+        with contextlib.suppress(Exception):
+            self._db.update_scan_stats(scan_id, stats.as_dict())
+
     def _gather_candidates(
-        self, subject: Subject, options: ScanOptions, stats: ScanStats
+        self, scan_id: str | None, subject: Subject, options: ScanOptions, stats: ScanStats
     ) -> list[tuple[SearchCandidate, bool]]:
         """Return ``(candidate, from_search)`` pairs, deduped and capped."""
         plan = plan_queries(subject, self._settings)
@@ -167,6 +213,7 @@ class Scanner:
             delay = float(getattr(search_provider, "polite_delay", 0.0))
             consecutive_failures = 0
             first = True
+            deadline = time.monotonic() + self._settings.max_search_seconds
             for pq in plan.queries:
                 if pq.sensitive and not options.include_sensitive:
                     stats.sensitive_skipped += 1
@@ -175,6 +222,11 @@ class Scanner:
                 # deepen the rate limit. Stop and report honestly.
                 if consecutive_failures >= 2:
                     stats.provider_errors.append("search_aborted_after_repeated_failures")
+                    break
+                # A rate-limited provider can burn minutes per query. Cap the
+                # phase and continue with whatever was found.
+                if time.monotonic() > deadline:
+                    stats.provider_errors.append("search_time_budget_exhausted")
                     break
                 if delay and not first:
                     time.sleep(delay)
@@ -191,6 +243,7 @@ class Scanner:
                     message = str(exc)
                     if message not in stats.provider_errors:
                         stats.provider_errors.append(message)
+                self._publish(scan_id, stats)
 
         manual = ManualURLProvider(options.manual_urls)
         pairs.extend((c, False) for c in manual.all_candidates())
@@ -215,7 +268,9 @@ class Scanner:
     def _run_inner(
         self, scan_id: str, subject: Subject, options: ScanOptions, stats: ScanStats
     ) -> None:
-        candidates = self._gather_candidates(subject, options, stats)
+        candidates = self._gather_candidates(scan_id, subject, options, stats)
+        stats.candidates = len(candidates)
+        self._publish(scan_id, stats)
         retriever = self._make_retriever(self._settings)
         try:
             for cand, from_search in candidates:
@@ -224,6 +279,8 @@ class Scanner:
                 if stats.bytes_downloaded >= self._settings.max_scan_bytes:
                     break
                 self._process_candidate(retriever, scan_id, subject, cand, from_search, stats)
+                # Publish after every page so the UI advances steadily.
+                self._publish(scan_id, stats)
         finally:
             retriever.close()
 
@@ -293,7 +350,10 @@ class Scanner:
         if match.state == MatchState.REJECTED or not _has_identity_anchor(match):
             return  # source recorded, but no findings (precision over recall)
 
-        groups = group_into_findings(observations)
+        groups = group_into_findings(_own_identifiers_only(observations, subject))
+        # Re-scanning the same page replaces its findings rather than adding a
+        # second copy of each.
+        self._db.supersede_findings_for_url(subject.id, source.canonical_url)
         categories_present = frozenset(groups.keys())
         supporting_names = [s.name for s in match.supporting_signals]
 
