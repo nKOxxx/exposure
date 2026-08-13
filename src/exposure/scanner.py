@@ -67,6 +67,8 @@ class ScanStats:
     provider_errors: list[str] = field(default_factory=list)
 
     rendered: int = 0
+    new_pages: int = 0
+    gone_pages: int = 0
     phase: str = "starting"
 
     @property
@@ -90,6 +92,8 @@ class ScanStats:
             "candidates": self.candidates,
             "retrieved": self.retrieved,
             "rendered": self.rendered,
+            "new_pages": self.new_pages,
+            "gone_pages": self.gone_pages,
             "blocked": self.blocked,
             "failed": self.failed,
             "bytes_downloaded": self.bytes_downloaded,
@@ -167,8 +171,22 @@ class Scanner:
     def run_existing(self, scan_id: str, subject: Subject, options: ScanOptions) -> ScanStats:
         """Run the pipeline for an already-created scan record."""
         stats = ScanStats()
+        # Remember which pages were known beforehand, so the scan can report
+        # what is genuinely new rather than restating everything each time.
+        before_urls = {
+            f_source.canonical_url
+            for finding in self._db.list_findings(subject.id)
+            if (f_source := self._db.get_source(finding.source_id)) is not None
+        }
         try:
             self._run_inner(scan_id, subject, options, stats)
+            after_urls = {
+                f_source.canonical_url
+                for finding in self._db.list_findings(subject.id)
+                if (f_source := self._db.get_source(finding.source_id)) is not None
+            }
+            stats.new_pages = len(after_urls - before_urls)
+            stats.gone_pages = len(before_urls - after_urls)
             status = "INCOMPLETE" if stats.provider_errors else "COMPLETE"
             self._db.finish_scan(scan_id, status, utcnow(), stats.as_dict())
         except Exception as exc:  # never leave a scan dangling

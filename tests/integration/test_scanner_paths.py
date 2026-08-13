@@ -206,8 +206,8 @@ def test_stats_serialize_for_the_api(db: Database, settings: Settings) -> None:
     payload = stats.as_dict()
     assert set(payload) == {
         "queries_planned", "queries_run", "sensitive_skipped", "candidates",
-        "retrieved", "rendered", "blocked", "failed", "bytes_downloaded",
-        "findings", "provider_errors", "phase", "progress_pct",
+        "retrieved", "rendered", "new_pages", "gone_pages", "blocked", "failed",
+        "bytes_downloaded", "findings", "provider_errors", "phase", "progress_pct",
     }
     # A finished scan reports 100% so the progress bar always completes.
     assert payload["phase"] == "done"

@@ -23,7 +23,12 @@ from exposure.app.schemas import (
 from exposure.assessment import explain_priority, identity_reason, why_it_matters
 from exposure.assessment.rules import Assessment
 from exposure.config import Settings
-from exposure.domain.enums import CaseState, RemediationRoute, Severity
+from exposure.domain.enums import (
+    CaseState,
+    RemediationRoute,
+    Severity,
+    VerificationStatus,
+)
 from exposure.domain.models import (
     LocationHint,
     Name,
@@ -387,6 +392,61 @@ class Service:
         CaseState.REVIEWED: ("to_do", "Choose how to act", "ACTION_SELECTED"),
     }
 
+    #: Case states worth re-checking: something was asked for and the outcome
+    #: is not yet settled, or was settled and could regress.
+    _RECHECKABLE = (
+        CaseState.USER_MARKED_SUBMITTED,
+        CaseState.AWAITING_RESPONSE,
+        CaseState.VERIFICATION_PENDING,
+        CaseState.SOURCE_CHANGED,
+        CaseState.VERIFIED,
+        CaseState.REAPPEARED,
+    )
+
+    def recheck_all(self) -> dict[str, Any]:
+        """Re-verify every open case and report what actually changed.
+
+        This is the loop that makes Exposure a remediation tool rather than a
+        scanner: a request was sent, and the only honest way to know whether it
+        worked is to look again. Reports observed states only — a page that is
+        merely unreachable is never counted as removed.
+        """
+        changes: list[dict[str, Any]] = []
+        checked = 0
+        for case in self.db.list_cases():
+            if case.state not in self._RECHECKABLE:
+                continue
+            before = case.state
+            try:
+                result = self.verify_case(case.id)
+            except ServiceError:
+                continue
+            checked += 1
+            after = CaseState(result["state"])
+            verification = result.get("verification") or {}
+            status = verification.get("source_status", "UNKNOWN")
+            if after != before:
+                finding = self.db.get_finding(case.finding_id)
+                source = self.db.get_source(finding.source_id) if finding else None
+                changes.append(
+                    {
+                        "case_id": case.id,
+                        "domain": source.registrable_domain if source else "",
+                        "from": before.value,
+                        "to": after.value,
+                        "status": status,
+                        "good": after == CaseState.VERIFIED,
+                        "bad": after == CaseState.REAPPEARED,
+                    }
+                )
+        return {
+            "checked": checked,
+            "changed": len(changes),
+            "changes": changes,
+            "resolved": sum(1 for c in changes if c["good"]),
+            "reappeared": sum(1 for c in changes if c["bad"]),
+        }
+
     def cleanup_board(self) -> dict[str, Any]:
         """The Cleanup view: what to do now, what you're waiting on, what's done.
 
@@ -479,9 +539,26 @@ class Service:
             retriever.close()
         case.verification = verification
         case.last_checked_at = utcnow()
-        # Move toward a verified/reappeared state based on what we observed.
-        from exposure.domain.enums import VerificationStatus
 
+        # Something previously confirmed gone has come back. This is the failure
+        # mode removal services are criticised for, so it is detected explicitly
+        # rather than left as a stale "verified".
+        gone_states = (
+            VerificationStatus.URL_GONE,
+            VerificationStatus.PERSONAL_DATA_REMOVED,
+            VerificationStatus.CONTENT_REMOVED,
+        )
+        if case.state == CaseState.VERIFIED and verification.source_status not in gone_states:
+            case.state = CaseState.REAPPEARED
+            self.db.update_case(case)
+            self.db.add_case_event(
+                case_id, "reappeared", {"status": verification.source_status.value}
+            )
+            return self._case_public(case) | {
+                "verification": verification.model_dump(mode="json"),
+                "reappeared": True,
+            }
+        # Move toward a verified/reappeared state based on what we observed.
         if case.state in (CaseState.USER_MARKED_SUBMITTED, CaseState.AWAITING_RESPONSE):
             case.state = CaseState.VERIFICATION_PENDING
         if case.state == CaseState.VERIFICATION_PENDING and verification.source_status in (

@@ -620,7 +620,20 @@ async function loadCases() {
        <button class="ghost" onclick="showTab('findings')">Go to Findings</button></div>`;
     return;
   }
-  el('cleanupBoard').innerHTML = LANES.map(([key, title, empty]) => {
+  const recheckable = (board.counts.waiting || 0) + (board.counts.verify || 0)
+                    + (board.lanes.done || []).length;
+  const header = `<div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div><strong>Track what actually happened</strong>
+        <div class="muted">Re-checks every request you've sent and tells you if
+        anything was removed — or came back.</div></div>
+      <button class="primary" ${recheckable ? '' : 'disabled'}
+              onclick="recheckAll()">Check for changes</button>
+    </div>
+    <div id="recheckResult"></div>
+  </div>`;
+
+  el('cleanupBoard').innerHTML = header + LANES.map(([key, title, empty]) => {
     const items = board.lanes[key] || [];
     return `<div class="card">
       <div class="row" style="justify-content:space-between">
@@ -679,6 +692,34 @@ const VERIFY_TEXT = {
   ACCESS_BLOCKED: 'Could not read the page to check',
   UNKNOWN: 'Could not determine — try again later',
 };
+
+// The outcome loop: ask every open case what actually happened.
+window.recheckAll = guard(async () => {
+  const box = el('recheckResult');
+  box.innerHTML = '<p class="muted">Re-checking every page you acted on…</p>';
+  const r = await api('POST', '/api/v1/cleanup/recheck');
+
+  let summary;
+  if (!r.checked) {
+    summary = '<p class="muted">Nothing to check yet — send a request first.</p>';
+  } else if (!r.changed) {
+    summary = `<p class="muted">Checked ${r.checked} —
+      <strong>no change since last time.</strong> Removal often takes weeks.</p>`;
+  } else {
+    summary = `<div style="margin-top:.6rem">
+      <strong>${r.resolved} resolved${r.reappeared ? `, ${r.reappeared} came back` : ''}</strong>
+      ${r.changes.map(c => `<div class="route">
+          <div><strong>${esc(c.domain)}</strong>
+            <div class="muted">${esc(VERIFY_TEXT[c.status] || c.status)}</div></div>
+          <span class="pill${c.good ? ' ok' : ''}">${
+            c.good ? 'gone' : (c.bad ? 'came back' : esc(c.to))}</span>
+        </div>`).join('')}
+    </div>`;
+  }
+  // Re-render the lanes first; loadCases() rebuilds the container this lives in.
+  await loadCases();
+  el('recheckResult').innerHTML = summary;
+});
 
 window.reopenDraft = guard(async (findingId) => {
   await showRoutes(findingId);
