@@ -91,7 +91,8 @@ strict = true
 warn_unreachable = true
 disallow_untyped_decorators = false
 
-# keyring is an optional extra; treat its absence as an untyped import.
+# Optional extras: absent in a base install (and in CI), so their imports are
+# guarded at runtime and untyped here.
 [[tool.mypy.overrides]]
-module = ["keyring", "keyring.*"]
+module = ["keyring", "keyring.*", "playwright", "playwright.*", "protego", "selectolax", "selectolax.*"]
 ignore_missing_imports = true
