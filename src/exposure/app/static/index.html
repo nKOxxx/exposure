@@ -200,6 +200,29 @@
     box-shadow:0 0 14px rgba(0,229,255,.6); transition:width .45s ease;
   }
 
+  /* ── settings: provider cards ─────────────────────────────────────── */
+  .prov {
+    border:1px solid var(--line); border-radius:var(--radius);
+    padding:.95rem 1.1rem; margin-top:.7rem; background:var(--panel-2);
+  }
+  .prov.active { border-color:rgba(79,255,159,.35);
+                 box-shadow:inset 3px 0 0 var(--lime); }
+  label.inline {
+    display:inline-flex; align-items:center; gap:.45rem; margin:0;
+    text-transform:none; letter-spacing:0; font-size:.85rem;
+    color:var(--fg); font-weight:500; cursor:pointer;
+  }
+  label.inline input[type=checkbox] { width:auto; margin:0; accent-color:var(--cyan); }
+
+  /* ── cleanup board: each lane carries its own accent ──────────────── */
+  .lane { border-left:2px solid var(--line-hi); }
+  .lane-to_do   { border-left-color:var(--cyan); }
+  .lane-waiting { border-left-color:var(--amber); }
+  .lane-verify  { border-left-color:var(--violet); }
+  .lane-done    { border-left-color:var(--lime); }
+  .lane h4 { margin:0; font-size:.7rem; text-transform:uppercase;
+             letter-spacing:.13em; color:var(--muted); font-weight:700; }
+
   /* ── remediation routes / cleanup rows ────────────────────────────── */
   .routes { margin-top:.85rem; border-top:1px solid var(--line); padding-top:.75rem; }
   .route { display:flex; justify-content:space-between; align-items:center; gap:1rem;
@@ -698,6 +721,20 @@ window.showRoutes = guard(async (findingId) => {
   </div>`;
 });
 
+// Category codes are for the database, not for people.
+const CATEGORY_LABEL = {
+  CONTACT_EMAIL: 'Email address', CONTACT_PHONE: 'Phone number',
+  HOME_ADDRESS: 'Home address', PERSONAL_LOCATION: 'Where you live',
+  DATE_OF_BIRTH: 'Date of birth', PROFESSIONAL_PROFILE: 'Work profile',
+  SOCIAL_PROFILE: 'Social profile', USERNAME: 'Username',
+  PERSONAL_DOCUMENT: 'Personal document', PUBLIC_RECORD: 'Public record',
+  COMPANY_RECORD: 'Company record', IMAGE_REFERENCE: 'Image',
+  OUTDATED_INFORMATION: 'Outdated information',
+  INCORRECT_INFORMATION: 'Incorrect information',
+  OTHER_PERSONAL_INFORMATION: 'Other personal information',
+};
+const categoryLabel = c => CATEGORY_LABEL[c] || c;
+
 function routeLabel(route) {
   return ({
     SEARCH_DELIST: 'Remove from Google search results',
@@ -716,14 +753,14 @@ window.openFinding = async (id) => {
   const dlg = document.getElementById('detailDialog');
   const dims = d.dimensions;
   dlg.innerHTML = `<form method="dialog" style="padding:1rem">
-    <h3>${esc(d.category)} <span class="pri pri-${esc(d.priority)}">${esc(d.priority)}</span></h3>
+    <h3>${esc(categoryLabel(d.category))} <span class="pri pri-${esc(d.priority)}">${esc(d.priority)}</span></h3>
     <p><strong>What did we find?</strong><br>${esc(d.what)}</p>
     <p><strong>Why do we think it's you?</strong><br>${esc(d.why_it_is_you)}</p>
     <p><strong>Why might it matter?</strong><br>${esc(d.why_it_matters)}</p>
     <p class="muted">Sensitivity ${dims.sensitivity} · Discoverability ${dims.discoverability} · Misuse ${dims.misuse_potential} · Persistence ${dims.persistence}</p>
     <p class="muted">${esc(d.priority_reason)}</p>
     <details><summary>Evidence (${d.observations.length})</summary>
-      ${d.observations.map(o=>`<div class="muted">• ${esc(o.type)}: ${esc(o.display_value)} <em>${esc(o.evidence_snippet)}</em></div>`).join('')}</details>
+      ${d.observations.map(o=>`<div class="muted">• ${esc(categoryLabel(o.type))}: ${esc(o.display_value)} <em>${esc(o.evidence_snippet)}</em></div>`).join('')}</details>
     <div class="row" style="margin:.6rem 0">
       <button type="button" class="ghost" onclick="decide('${id}','me')">This is me</button>
       <button type="button" class="ghost" onclick="decide('${id}','not_me')">Not me</button>
@@ -795,13 +832,13 @@ async function loadCases() {
 
   el('cleanupBoard').innerHTML = header + LANES.map(([key, title, empty]) => {
     const items = board.lanes[key] || [];
-    return `<div class="card">
+    return `<div class="card lane lane-${key}">
       <div class="row" style="justify-content:space-between">
-        <strong>${esc(title)}</strong><span class="pill">${items.length}</span>
+        <h4>${esc(title)}</h4><span class="pill">${items.length}</span>
       </div>
       ${items.length
         ? items.map(c => caseRow(c, key)).join('')
-        : `<p class="muted" style="margin:.4rem 0 0">${esc(empty)}</p>`}
+        : `<p class="muted" style="margin:.45rem 0 0">${esc(empty)}</p>`}
     </div>`;
   }).join('');
 }
@@ -812,7 +849,7 @@ function caseRow(c, lane) {
     <div>
       <a href="${esc(c.url)}" target="_blank" rel="noreferrer noopener"
          class="ptitle">${esc(c.title)}</a>
-      <div class="muted">${esc(routeLabel(c.route))} · ${esc(c.category)}
+      <div class="muted">${esc(routeLabel(c.route))} · ${esc(categoryLabel(c.category))}
         ${verified ? ` · <strong>${esc(verified)}</strong>` : ''}</div>
       <div class="muted"><strong>${esc(c.next_label)}</strong></div>
     </div>
@@ -898,24 +935,49 @@ const PROVIDER_BLURB = {
   ai: 'Optional. Exposure is fully functional with AI off, and off is the default.',
 };
 
+const PROVIDER_NAME = {
+  duckduckgo: 'DuckDuckGo', searxng: 'SearXNG', brave: 'Brave Search', ai: 'AI explanations',
+};
+
 async function loadProviders() {
   const provs = await api('GET','/api/v1/settings/providers');
-  el('providersBox').innerHTML = provs.map(p=>`
-    <div class="card" style="margin:.5rem 0">
-      <strong>${esc(p.id)}</strong> <span class="muted">(${esc(p.kind)})</span>
-      ${p.needs_key
-        ? (p.has_key?'<span class="pill">key set</span>':'<span class="pill">no key</span>')
-        : '<span class="pill">no key required</span>'}
-      <div class="muted" style="margin:.3rem 0">${PROVIDER_BLURB[p.id]||''}</div>
-      ${p.id==='searxng'
-        ? `<label>Instance URL</label>
-           <input id="url-${p.id}" placeholder="http://127.0.0.1:8888"
-                  value="${esc((p.config&&p.config.base_url)||'')}">`
-        : `<label>API key (stored in your OS keyring / encrypted vault — never in the database)</label>
-           <input type="password" id="key-${p.id}" placeholder="paste key to update">`}
-      <label class="row"><input type="checkbox" id="en-${p.id}" ${p.enabled?'checked':''} style="width:auto"> &nbsp;enabled</label>
-      <button class="ghost" onclick="saveProvider('${p.id}')">Save ${esc(p.id)}</button>
-    </div>`).join('');
+  const active = await activeSearchProvider();
+
+  el('providersBox').innerHTML = provs.map(p => {
+    const inUse = p.id === active;
+    // DuckDuckGo is the built-in default: nothing to configure, so it gets no
+    // key field, no toggle and no save button.
+    const configurable = p.id !== 'duckduckgo';
+    const status = inUse
+      ? '<span class="pill ok">in use</span>'
+      : (p.needs_key
+          ? (p.has_key ? '<span class="pill">key set</span>' : '<span class="pill">needs a key</span>')
+          : '<span class="pill">available</span>');
+
+    const field = p.id === 'searxng'
+      ? `<label>Instance URL</label>
+         <input id="url-${p.id}" placeholder="http://127.0.0.1:8888"
+                value="${esc((p.config && p.config.base_url) || '')}">`
+      : (p.needs_key
+          ? `<label>API key</label>
+             <input type="password" id="key-${p.id}" placeholder="paste key to update">
+             <p class="muted" style="margin:.35rem 0 0">Stored in your OS keyring or an
+             encrypted local file — never in the database, logs or exports.</p>`
+          : '');
+
+    return `<div class="prov${inUse ? ' active' : ''}">
+      <div class="row" style="justify-content:space-between;align-items:baseline">
+        <strong>${esc(PROVIDER_NAME[p.id] || p.id)}</strong>${status}
+      </div>
+      <p class="muted" style="margin:.35rem 0 0">${PROVIDER_BLURB[p.id] || ''}</p>
+      ${configurable ? field : ''}
+      ${configurable ? `<div class="row" style="margin-top:.7rem">
+          <label class="inline"><input type="checkbox" id="en-${p.id}"
+            ${p.enabled ? 'checked' : ''}> Enabled</label>
+          <button class="ghost" onclick="saveProvider('${p.id}')">Save</button>
+        </div>` : ''}
+    </div>`;
+  }).join('');
 }
 window.saveProvider = guard(async (id) => {
   const body = { enabled: el('en-'+id).checked, config: {} };
